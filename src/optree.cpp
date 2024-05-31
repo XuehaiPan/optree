@@ -67,6 +67,15 @@ void BuildModule(py::module_& mod) {  // NOLINT[runtime/references]
              "Unregister a Python type.",
              py::arg("cls"),
              py::arg("namespace") = "")
+        .def("is_dict_sorted",
+             &PyTreeSpec::IsDictSorted,
+             "Return whether need to sort the dict keys during flattening.",
+             py::arg("namespace") = "")
+        .def("set_dict_sorted",
+             &PyTreeSpec::SetDictSorted,
+             "Set whether need to sort the dict keys during flattening.",
+             py::arg("mode"),
+             py::arg("namespace") = "")
         .def("flatten",
              &PyTreeSpec::Flatten,
              "Flattens a pytree.",
