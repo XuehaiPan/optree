@@ -23,7 +23,7 @@ class CMakeExtension(Extension):
 
     @classmethod
     def cmake_executable(cls):
-        cmake = os.getenv('CMAKE_EXECUTABLE', '')
+        cmake = os.getenv('CMAKE_COMMAND', '')
         if not cmake:
             cmake = shutil.which('cmake')
         return cmake
