@@ -89,7 +89,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        runner: [ubuntu-22.04, windows-latest, macos-latest]
+        runner: [ubuntu-latest, windows-latest, macos-latest]
         python-version:
           - "3.8"
           - "3.9"
@@ -110,16 +110,16 @@ jobs:
           # Windows
           - "ARM64"
         exclude:
-          - runner: ubuntu-22.04
+          - runner: ubuntu-latest
             python-version: "pypy-3.9"
             archs: "ppc64le"
-          - runner: ubuntu-22.04
+          - runner: ubuntu-latest
             python-version: "pypy-3.10"
             archs: "ppc64le"
-          - runner: ubuntu-22.04
+          - runner: ubuntu-latest
             python-version: "pypy-3.9"
             archs: "s390x"
-          - runner: ubuntu-22.04
+          - runner: ubuntu-latest
             python-version: "pypy-3.10"
             archs: "s390x"
           - runner: windows-latest
@@ -133,7 +133,7 @@ jobs:
             archs: "ARM64"
 
           # Exclude archs of other platforms
-          - runner: ubuntu-22.04
+          - runner: ubuntu-latest
             archs: "ARM64"
           - runner: windows-latest
             archs: "aarch64"
