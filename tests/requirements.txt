@@ -2,6 +2,7 @@
 
 pytest
 pytest-cov
+pytest-timeout
 pytest-xdist
 ruff
 pylint[spelling]

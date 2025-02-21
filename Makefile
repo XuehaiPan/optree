@@ -103,6 +103,7 @@ docs-install:
 pytest-install:
 	$(call check_pip_install,pytest)
 	$(call check_pip_install,pytest-cov)
+	$(call check_pip_install,pytest-timeout)
 	$(call check_pip_install,pytest-xdist)
 
 .PHONY: test-install

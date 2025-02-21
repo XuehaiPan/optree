@@ -64,6 +64,7 @@ dependencies:
   # Testing
   - conda-forge::pytest
   - conda-forge::pytest-cov
+  - conda-forge::pytest-timeout
   - conda-forge::pytest-xdist
   - conda-forge::ruff
   - conda-forge::pylint

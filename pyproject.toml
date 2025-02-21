@@ -72,7 +72,12 @@ lint = [
     "cpplint",
     "pre-commit",
 ]
-test = ["pytest", "pytest-cov", "pytest-xdist"]
+test = [
+    "pytest",
+    "pytest-cov",
+    "pytest-timeout",
+    "pytest-xdist",
+]
 docs = [
     "sphinx",
     "sphinx-autoapi",
@@ -291,6 +296,7 @@ inline-quotes = "single"
 ban-relative-imports = "all"
 
 [tool.pytest.ini_options]
+timeout = 600
 verbosity_assertions = 3
 filterwarnings = [
     "error",
