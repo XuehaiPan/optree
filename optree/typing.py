@@ -19,7 +19,6 @@ from __future__ import annotations
 import abc
 import functools
 import platform
-import sys
 import types
 from collections.abc import Hashable
 from typing import (
@@ -531,10 +530,6 @@ def is_structseq_class(cls: type, /) -> bool:
     return False
 
 
-# pylint: disable-next=line-too-long
-StructSequenceFieldType: type[types.MemberDescriptorType] = type(type(sys.version_info).major)  # type: ignore[assignment]
-
-
 @_override_with_(_C.structseq_fields)
 def structseq_fields(obj: tuple | type[tuple], /) -> tuple[str, ...]:
     """Return the field names of a PyStructSequence."""
@@ -548,17 +543,20 @@ def structseq_fields(obj: tuple | type[tuple], /) -> tuple[str, ...]:
             raise TypeError(f'Expected an instance of PyStructSequence type, got {obj!r}.')
 
     if platform.python_implementation() == 'PyPy':
+        # pylint: disable-next=import-error,import-outside-toplevel
+        from _structseq import structseqfield
+
         indices_by_name = {
-            name: member.index  # type: ignore[attr-defined]
+            name: member.index
             for name, member in vars(cls).items()
-            if isinstance(member, StructSequenceFieldType)
+            if isinstance(member, structseqfield)
         }
         fields = sorted(indices_by_name, key=indices_by_name.get)  # type: ignore[arg-type]
     else:
         fields = [
             name
             for name, member in vars(cls).items()
-            if isinstance(member, StructSequenceFieldType)
+            if isinstance(member, types.MemberDescriptorType)
         ]
     return tuple(fields[: cls.n_sequence_fields])  # type: ignore[attr-defined]
 

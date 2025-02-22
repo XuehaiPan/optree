@@ -400,13 +400,12 @@ inline py::tuple StructSequenceGetFieldsImpl(const py::handle& type) {
     py::list fields{};
     py::exec(
         R"py(
-        import sys
+        from _structseq import structseqfield
 
-        StructSequenceFieldType = type(type(sys.version_info).major)
         indices_by_name = {
             name: member.index
             for name, member in vars(cls).items()
-            if isinstance(member, StructSequenceFieldType)
+            if isinstance(member, structseqfield)
         }
         fields.extend(sorted(indices_by_name, key=indices_by_name.get)[:cls.n_sequence_fields])
         )py",
