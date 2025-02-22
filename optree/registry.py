@@ -165,7 +165,7 @@ def pytree_node_registry_get(
 ) -> dict[type, PyTreeNodeRegistryEntry]: ...
 
 
-# pylint: disable-next=too-many-return-statements
+# pylint: disable-next=too-many-return-statements,too-many-branches
 def pytree_node_registry_get(  # noqa: C901
     cls: type | None = None,
     /,
@@ -228,6 +228,14 @@ def pytree_node_registry_get(  # noqa: C901
     """
     if namespace is __GLOBAL_NAMESPACE:
         namespace = ''
+    if (
+        cls is not None
+        and cls is not namedtuple  # noqa: PYI024
+        and not inspect.isclass(cls)
+    ):
+        raise TypeError(f'Expected a class or None, got {cls!r}.')
+    if not isinstance(namespace, str):
+        raise TypeError(f'The namespace must be a string, got {namespace!r}.')
 
     if cls is None:
         namespaces = frozenset({namespace, ''})
