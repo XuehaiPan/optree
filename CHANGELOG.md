@@ -13,10 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add `attrs` integration module `optree.integrations.attrs` with `field`, `define`, `frozen`, `mutable`, `make_class`, `register_node`, and `AttrsEntry` by [@XuehaiPan](https://github.com/XuehaiPan) in [#273](https://github.com/metaopt/optree/pull/273).
-- Add `optree.dataclasses.register_node` to register existing dataclasses as pytree nodes by [@XuehaiPan](https://github.com/XuehaiPan) in [#273](https://github.com/metaopt/optree/pull/273).
-- Extend `GetAttrEntry` to support dotted attribute paths for traversing nested attributes (e.g., `a.b.c`) by [@XuehaiPan](https://github.com/XuehaiPan).
-- Add `functools.Placeholder` support and re-export for `optree.functools.partial` (Python 3.14+) by [@XuehaiPan](https://github.com/XuehaiPan) in [#276](https://github.com/metaopt/optree/pull/276).
+-
 
 ### Changed
 
@@ -24,11 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fix Windows wheels crashing when another extension preloads an older `msvcp140.dll` by disabling MSVC's constexpr `std::mutex` constructor by [@XuehaiPan](https://github.com/XuehaiPan) in [#279](https://github.com/metaopt/optree/pull/279).
+-
 
 ### Removed
 
 -
+
+------
+
+## [0.19.1] - 2026-05-05
+
+### Added
+
+- Add `attrs` integration module `optree.integrations.attrs` with `field`, `define`, `frozen`, `mutable`, `make_class`, `register_node`, and `AttrsEntry` by [@XuehaiPan](https://github.com/XuehaiPan) in [#273](https://github.com/metaopt/optree/pull/273).
+- Add `optree.dataclasses.register_node` to register existing dataclasses as pytree nodes by [@XuehaiPan](https://github.com/XuehaiPan) in [#273](https://github.com/metaopt/optree/pull/273).
+- Extend `GetAttrEntry` to support dotted attribute paths for traversing nested attributes (e.g., `a.b.c`) by [@XuehaiPan](https://github.com/XuehaiPan).
+- Add `functools.Placeholder` support and re-export for `optree.functools.partial` (Python 3.14+) by [@XuehaiPan](https://github.com/XuehaiPan) in [#276](https://github.com/metaopt/optree/pull/276).
+
+### Fixed
+
+- Fix Windows wheels crashing when another extension preloads an older `msvcp140.dll` by disabling MSVC's constexpr `std::mutex` constructor by [@XuehaiPan](https://github.com/XuehaiPan) in [#279](https://github.com/metaopt/optree/pull/279). Issued by [@jmkolbe](https://github.com/jmkolbe) in [#278](https://github.com/metaopt/optree/issues/278).
 
 ------
 
@@ -501,7 +513,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ------
 
-[Unreleased]: https://github.com/metaopt/optree/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/metaopt/optree/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/metaopt/optree/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/metaopt/optree/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/metaopt/optree/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/metaopt/optree/compare/v0.16.0...v0.17.0
