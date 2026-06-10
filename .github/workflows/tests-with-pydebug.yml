@@ -382,7 +382,7 @@ jobs:
             echo "::warning::\`import optree\` did NOT crash on this runner image (likely VS2022)"
           fi
           cdb -g -G -o \
-            -c 'sxe av; g; .reload /f; .echo ====ANALYZE====; !analyze -vv; .echo ====EXCEPTION-CONTEXT====; .ecxr; .echo ====FAULTING-STACK====; kP; .echo ====ALL-THREAD-STACKS====; ~*kP; .echo ====PYTHON-STACK====; !py; .dump /ma /u core_import.dmp; .echo ====DONE====; q' \
+            -c 'sxe av; g; .reload /f; .echo ====FAULTING-STACK====; kP; .echo ====DLL-PYOBJECT(MSVC19.44)====; dt python314t_d!_object; .echo ====EXT-PYOBJECT(MSVC19.51)====; dt _C_d_cp314t_win_amd64!_object; .echo ====DLL-TYPEOBJECT(MSVC19.44)====; dt python314t_d!_typeobject tp_name tp_basicsize tp_itemsize tp_dictoffset tp_base tp_init tp_alloc tp_new tp_free; .echo ====EXT-TYPEOBJECT(MSVC19.51)====; dt _C_d_cp314t_win_amd64!_typeobject tp_name tp_basicsize tp_itemsize tp_dictoffset tp_base tp_init tp_alloc tp_new tp_free; .echo ====SIZEOF====; ?? sizeof(python314t_d!_object); ?? sizeof(_C_d_cp314t_win_amd64!_object); .echo ====DISASM-MSPT====; u _C_d_cp314t_win_amd64!pybind11::detail::make_static_property_type L70; .echo ====DONE====; q' \
             "${{ env.PYTHON }}" -X dev -c 'import optree' || true
 
       - name: Test with pytest
