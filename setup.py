@@ -194,6 +194,12 @@ class cmake_build_ext(build_ext):  # noqa: N801
             f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_{config.upper()}={ext_path.parent}',
             f'-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY_{config.upper()}={build_temp}',
         ]
+        if os.getenv('OPTREE_COPY_PDB'):
+            # Emit the linker `.pdb` next to the `.pyd` so `copy_extensions_to_source` can retain
+            # it for symbolized native crash backtraces (opt-in; used by CI crash investigation).
+            cmake_args.append(
+                f'-DCMAKE_PDB_OUTPUT_DIRECTORY_{config.upper()}={ext_path.parent}',
+            )
 
         # Print debug information
         eprint(f'-- Building CMake extension: {ext.name} ({config})')
@@ -306,6 +312,25 @@ class cmake_build_ext(build_ext):  # noqa: N801
         with cmake_context(cmake, dry_run=self.dry_run, verbose=True) as cmake_exe:
             self.spawn([cmake_exe, '-S', str(ext.source_dir), '-B', str(build_temp), *cmake_args])
             self.spawn([cmake_exe, '--build', str(build_temp), *build_args])
+
+    def copy_extensions_to_source(self) -> None:
+        super().copy_extensions_to_source()
+        # Optionally retain MSVC debug symbols (`.pdb`) next to the in-source `.pyd` so native
+        # crashes inside the extension symbolize under a debugger. Opt-in via `OPTREE_COPY_PDB=1`
+        # (used by CI crash investigation); a no-op for normal builds and where no `.pdb` exists.
+        if not os.getenv('OPTREE_COPY_PDB'):
+            return
+        build_py = self.get_finalized_command('build_py')
+        for ext in self.extensions:
+            fullname = self.get_ext_fullname(ext.name)
+            package = fullname.rpartition('.')[0]
+            package_dir = Path(build_py.get_package_dir(package)).absolute()
+            built_dir = Path(self.get_ext_fullpath(ext.name)).absolute().parent
+            for pdb in built_dir.glob('*.pdb'):
+                if pdb.name.lower().startswith('vc'):
+                    continue  # skip the compiler `.pdb`; keep the linker `.pdb` matching the `.pyd`
+                self.copy_file(os.fspath(pdb), os.fspath(package_dir / pdb.name))
+                eprint(f'-- Retained debug symbols: {pdb.name} -> {package_dir}')
 
 
 @contextlib.contextmanager

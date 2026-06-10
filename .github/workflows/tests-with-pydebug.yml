@@ -332,6 +332,8 @@ jobs:
           make cmake-build PYTHON="${{ env.PYTHON }}" && make clean
 
       - name: Install OpTree
+        env:
+          OPTREE_COPY_PDB: "1" # retain extension `.pdb` next to the `.pyd` for native crash backtraces
         shell: bash
         run: |
           source "venv/${VENV_BIN_NAME}/activate"
@@ -354,7 +356,7 @@ jobs:
             echo "::warning::\`import optree\` did NOT crash on this runner image (likely VS2022)"
           fi
           cdb -g -G -o \
-            -c 'sxe av; g; .echo ====ANALYZE====; !analyze -vv; .echo ====EXCEPTION-CONTEXT====; .ecxr; .echo ====FAULTING-STACK====; kP; .echo ====ALL-THREAD-STACKS====; ~*kP; .echo ====PYTHON-STACK====; !py; .dump /ma /u core_import.dmp; .echo ====DONE====; q' \
+            -c 'sxe av; g; .reload /f; .echo ====ANALYZE====; !analyze -vv; .echo ====EXCEPTION-CONTEXT====; .ecxr; .echo ====FAULTING-STACK====; kP; .echo ====ALL-THREAD-STACKS====; ~*kP; .echo ====PYTHON-STACK====; !py; .dump /ma /u core_import.dmp; .echo ====DONE====; q' \
             "${{ env.PYTHON }}" -X dev -c 'import optree' || true
 
       - name: Test with pytest

@@ -6,6 +6,8 @@ arg
 args
 arity
 attrs
+backtrace
+backtraces
 bool
 boolean
 broadcasted
@@ -54,10 +56,12 @@ jax
 kwargs
 kwds
 len
+linker
 lr
 mappingentry
 maxlen
 metaclass
+msvc
 mycontainer
 mytuple
 namedtuple
@@ -70,8 +74,10 @@ optree
 OrderedDict
 param
 params
+pdb
 pragma
 py
+pyd
 pypy
 pytree
 pytreeentry
