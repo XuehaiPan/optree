@@ -352,6 +352,9 @@ jobs:
           # first-chance access violation, and print a full native backtrace and crash analysis
           # (and write a core dump for offline analysis / artifact upload).
           cd tests
+          echo "::group::optree extension + retained debug symbols"
+          ls -la ../optree/_C*.pyd ../optree/_C*.pdb 2>&1 || true
+          echo "::endgroup::"
           if "${{ env.PYTHON }}" -X dev -c 'import optree'; then
             echo "::warning::\`import optree\` did NOT crash on this runner image (likely VS2022)"
           fi

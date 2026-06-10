@@ -195,8 +195,8 @@ class cmake_build_ext(build_ext):  # noqa: N801
             f'-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY_{config.upper()}={build_temp}',
         ]
         if os.getenv('OPTREE_COPY_PDB'):
-            # Emit the linker `.pdb` next to the `.pyd` so `copy_extensions_to_source` can retain
-            # it for symbolized native crash backtraces (opt-in; used by CI crash investigation).
+            # Emit the linker `.pdb` into the build output directory (next to the `.pyd`) so it can
+            # be retained for symbolized native crash backtraces (see the copy step after the build).
             cmake_args.append(
                 f'-DCMAKE_PDB_OUTPUT_DIRECTORY_{config.upper()}={ext_path.parent}',
             )
@@ -313,24 +313,27 @@ class cmake_build_ext(build_ext):  # noqa: N801
             self.spawn([cmake_exe, '-S', str(ext.source_dir), '-B', str(build_temp), *cmake_args])
             self.spawn([cmake_exe, '--build', str(build_temp), *build_args])
 
-    def copy_extensions_to_source(self) -> None:
-        super().copy_extensions_to_source()
-        # Optionally retain MSVC debug symbols (`.pdb`) next to the in-source `.pyd` so native
-        # crashes inside the extension symbolize under a debugger. Opt-in via `OPTREE_COPY_PDB=1`
-        # (used by CI crash investigation); a no-op for normal builds and where no `.pdb` exists.
-        if not os.getenv('OPTREE_COPY_PDB'):
-            return
-        build_py = self.get_finalized_command('build_py')
-        for ext in self.extensions:
-            fullname = self.get_ext_fullname(ext.name)
-            package = fullname.rpartition('.')[0]
-            package_dir = Path(build_py.get_package_dir(package)).absolute()
-            built_dir = Path(self.get_ext_fullpath(ext.name)).absolute().parent
-            for pdb in built_dir.glob('*.pdb'):
-                if pdb.name.lower().startswith('vc'):
-                    continue  # skip the compiler `.pdb`; keep the linker `.pdb` matching the `.pyd`
+        if os.getenv('OPTREE_COPY_PDB'):
+            # Retain the linker `.pdb` next to the in-source `.pyd` so native crashes inside the
+            # extension symbolize under a debugger. PEP 660 editable installs copy the `.pyd` into
+            # the source tree through their own path (not `copy_extensions_to_source`), so do this
+            # here in `build_extension`, which always runs. Opt-in via `OPTREE_COPY_PDB=1` (used by
+            # the CI crash investigation); inert for normal builds.
+            build_py = self.get_finalized_command('build_py')
+            package_dir = Path(build_py.get_package_dir(ext.name.rpartition('.')[0])).absolute()
+            found: dict[str, Path] = {}
+            for pdb in (*ext_path.parent.glob('*.pdb'), *build_temp.rglob('*.pdb')):
+                if not pdb.name.lower().startswith('vc'):  # skip the compiler `.pdb`
+                    found.setdefault(pdb.name, pdb)
+            for pdb in found.values():
                 self.copy_file(os.fspath(pdb), os.fspath(package_dir / pdb.name))
-                eprint(f'-- Retained debug symbols: {pdb.name} -> {package_dir}')
+                eprint(f'-- Retained debug symbols: {pdb} -> {package_dir}')
+            if not found:
+                eprint(
+                    f'-- WARNING: no linker `.pdb` found under {ext_path.parent} or {build_temp}',
+                )
+                for path in sorted(ext_path.parent.glob('*')):
+                    eprint(f'--   {path.name}')
 
 
 @contextlib.contextmanager
