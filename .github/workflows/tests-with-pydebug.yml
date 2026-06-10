@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - ci/cp314td-windows-vs2026-trace # investigation branch; remove before merge
   schedule:
     # Run at 12:00 Asia/Shanghai (04:00 UTC) every three days with nightly pybind11
     - cron: "0 4 */3 * *"
@@ -66,24 +67,13 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        runner: [ubuntu-latest, macos-latest, windows-latest]
+        # Investigation branch: reduced to the failing free-threaded debug build on Windows
+        # (cp314td) plus the passing regular debug build (cp314d) as an in-run control, to trace
+        # the VS2026 (MSVC 19.51) `import optree` crash. Restore the full matrix before merge.
+        runner: [windows-latest]
         python-version:
-          - "3.9"
-          - "3.10"
-          - "3.11"
-          - "3.12"
-          - "3.13"
           - "3.14"
         python-abiflags: ["d", "td"]
-        exclude:
-          - python-version: "3.9"
-            python-abiflags: "td"
-          - python-version: "3.10"
-            python-abiflags: "td"
-          - python-version: "3.11"
-            python-abiflags: "td"
-          - python-version: "3.12"
-            python-abiflags: "td"
       fail-fast: false
     timeout-minutes: 180
     steps:
@@ -346,6 +336,26 @@ jobs:
         run: |
           source "venv/${VENV_BIN_NAME}/activate"
           ${{ env.PYTHON }} -m pip install -v --editable '.[test]'
+
+      - name: Capture native backtrace of import crash (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          source "venv/${VENV_BIN_NAME}/activate"
+          set -x
+          # The VS2026 (MSVC 19.51) toolchain makes `import optree` segfault on the free-threaded
+          # debug build. The crash fires on a bare import, before the `cdb`-wrapped pytest, so the
+          # normal flow captures no core dump. Run the import directly under `cdb`, break on the
+          # first-chance access violation, and print a full native backtrace and crash analysis
+          # (and write a core dump for offline analysis / artifact upload).
+          cd tests
+          if "${{ env.PYTHON }}" -X dev -c 'import optree'; then
+            echo "::warning::\`import optree\` did NOT crash on this runner image (likely VS2022)"
+          fi
+          cdb -g -G -o \
+            -c 'sxe av; g; .echo ====ANALYZE====; !analyze -vv; .echo ====EXCEPTION-CONTEXT====; .ecxr; .echo ====FAULTING-STACK====; kP; .echo ====ALL-THREAD-STACKS====; ~*kP; .echo ====PYTHON-STACK====; !py; .dump /ma /u core_import.dmp; .echo ====DONE====; q' \
+            "${{ env.PYTHON }}" -X dev -c 'import optree' || true
 
       - name: Test with pytest
         shell: bash
