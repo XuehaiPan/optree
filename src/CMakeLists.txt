@@ -30,6 +30,24 @@ set(
 
 pybind11_add_module(_C MODULE "${optree_csrc}")
 
+# Free-threaded (PEP 703) builds must compile the extension with `Py_GIL_DISABLED` so the
+# `PyObject` / `PyTypeObject` header layout matches the free-threaded interpreter it is loaded into.
+# On Windows `pyconfig.h` does NOT define it automatically (its comment says "a build backend will
+# define it with the value"), and neither CMake's FindPython nor `pybind11_add_module` do. Without
+# it the extension uses the 16-byte GIL `PyObject` header while linking the 32-byte free-threaded
+# runtime, shifting every `PyTypeObject` slot down 16 bytes (e.g. the extension reads `tp_alloc`
+# where the runtime stores `tp_dictoffset`) and segfaulting on `import`.
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c
+            "import sysconfig; print(int(bool(sysconfig.get_config_var('Py_GIL_DISABLED'))))"
+    OUTPUT_VARIABLE OPTREE_Py_GIL_DISABLED
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(OPTREE_Py_GIL_DISABLED)
+    message(STATUS "Free-threaded Python detected: defining Py_GIL_DISABLED=1 for target _C")
+    target_compile_definitions(_C PRIVATE Py_GIL_DISABLED=1)
+endif()
+
 if(DEFINED Python_EXTRA_LIBRARIES)
     target_link_libraries(_C PRIVATE ${Python_EXTRA_LIBRARIES})
 endif()

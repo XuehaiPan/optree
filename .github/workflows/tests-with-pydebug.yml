@@ -331,36 +331,14 @@ jobs:
           source "venv/${VENV_BIN_NAME}/activate"
           make cmake-build PYTHON="${{ env.PYTHON }}" && make clean
 
-      - name: Install OpTree (against patched pybind11)
+      - name: Install OpTree
         env:
           OPTREE_COPY_PDB: "1" # retain extension `.pdb` next to the `.pyd` for native crash backtraces
         shell: bash
         run: |
           source "venv/${VENV_BIN_NAME}/activate"
-
-          # Install build deps into the venv so pybind11's headers can be patched before
-          # `optree._C` is compiled (built with `--no-build-isolation` below to reuse them).
-          ${{ env.PYTHON }} -m pip install --upgrade 'setuptools>=77' 'pybind11>=2.12' wheel
-
-          # Patch pybind11: MSVC 19.51 (VS2026) miscompiles the indirect call through the
-          # `PyType_Type.tp_alloc` slot on the free-threaded build (NX fault during `import optree`).
-          # Use the public `PyType_GenericAlloc()` instead (equivalent for the metatype).
-          CLASS_H="$(
-            ${{ env.PYTHON }} -c 'import pathlib, pybind11; print(pathlib.Path(pybind11.get_include(), "pybind11", "detail", "class.h"))'
-          )"
-          echo "::group::Patch pybind11: ${CLASS_H}"
-          echo "Before:"; grep -n 'PyType_Type\.tp_alloc(&PyType_Type, 0)' "${CLASS_H}" || true
-          sed -i 's/PyType_Type\.tp_alloc(&PyType_Type, 0)/PyType_GenericAlloc(\&PyType_Type, 0)/g' "${CLASS_H}"
-          echo "After:"; grep -n 'PyType_GenericAlloc(&PyType_Type, 0)' "${CLASS_H}" || true
-          n="$(grep -c 'PyType_GenericAlloc(&PyType_Type, 0)' "${CLASS_H}" || true)"
-          echo "::endgroup::"
-          if [[ "${n}" -ne 2 ]]; then
-            echo "::error::pybind11 patch applied to ${n}/2 sites; aborting" >&2
-            exit 1
-          fi
-
-          # Build `optree._C` against the patched pybind11 (no isolation -> reuse the venv deps).
-          ${{ env.PYTHON }} -m pip install -v --no-build-isolation --editable '.[test]'
+          # Stock pybind11 from PyPI; the real fix is `-DPy_GIL_DISABLED=1` in `src/CMakeLists.txt`.
+          ${{ env.PYTHON }} -m pip install -v --editable '.[test]'
 
       - name: Capture native backtrace of import crash (Windows)
         if: runner.os == 'Windows'
