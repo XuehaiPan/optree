@@ -18,7 +18,9 @@
 import copy
 import pickle
 import re
+import subprocess
 import sys
+import textwrap
 import warnings
 import weakref
 from collections import UserDict, UserList, namedtuple
@@ -437,6 +439,69 @@ def test_register_pytree_node_warning_as_error_does_not_corrupt_registry():
         optree.tree_structure(tree, namespace='mytuple_warn_error'),
     )
     optree.unregister_pytree_node(mytuple, namespace='mytuple_warn_error')
+
+
+def test_register_pytree_node_no_deadlock_with_concurrent_flatten():
+    # Regression: `register_pytree_node` takes the registry write lock, and the namedtuple /
+    # PyStructSequence detection it runs releases the GIL. Holding the registry lock across that GIL
+    # release inverts the GIL <-> lock order and deadlocks a concurrent `tree_flatten` that holds
+    # the GIL while waiting on the registry read lock, wedging the whole interpreter. Run register /
+    # unregister concurrently with flatten in a subprocess under a watchdog; the process must finish.
+    script = textwrap.dedent(
+        """
+        import faulthandler
+        import threading
+
+        import optree
+
+        class MyType:
+            def __init__(self, children):
+                self.children = children
+
+        faulthandler.dump_traceback_later(30, exit=True)  # watchdog: abort the process on a hang
+
+        def register_loop():
+            for _ in range(50000):
+                try:
+                    optree.register_pytree_node(
+                        MyType,
+                        lambda o: (tuple(o.children), None, None),
+                        lambda _, c: MyType(list(c)),
+                        namespace='deadlock',
+                    )
+                except ValueError:
+                    pass
+                try:
+                    optree.unregister_pytree_node(MyType, namespace='deadlock')
+                except ValueError:
+                    pass
+
+        def flatten_loop():
+            tree = {'a': 1, 'b': 2, 'c': 3}
+            for _ in range(50000):
+                optree.tree_flatten(tree)
+
+        threads = [
+            threading.Thread(target=register_loop),
+            threading.Thread(target=flatten_loop),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        print('COMPLETED')
+        """,
+    ).strip()
+
+    result = subprocess.run(
+        [sys.executable, '-c', script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, f'stdout={result.stdout!r} stderr={result.stderr!r}'
+    assert result.stdout.strip().endswith('COMPLETED')
 
 
 def test_flatten_with_wrong_number_of_returns():
