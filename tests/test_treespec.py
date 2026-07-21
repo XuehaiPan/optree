@@ -872,6 +872,160 @@ def test_treespec_compose_children(
             assert optree.treespec_is_suffix(expected_treespec, treespec, strict=False)
 
 
+def test_treespec_compose_rejects_incompatible_namespace_merge():
+    # Regression: composing an empty-namespace spec (whose custom nodes are resolved globally) with a
+    # spec in another namespace adopted that namespace but kept the global registrations. When the
+    # same type is registered differently in the two namespaces, the composed spec silently used the
+    # wrong flatten/unflatten (spurious flatten_up_to errors; corrupt pickle). The merge is rejected.
+    class Pair:
+        def __init__(self, a, b):
+            self.a, self.b = a, b
+
+    class Single:
+        def __init__(self, x):
+            self.x = x
+
+    optree.register_pytree_node(
+        Pair,
+        lambda t: ((t.a, t.b), None, None),
+        lambda m, c: Pair(c[0], c[1]),
+        namespace=GLOBAL_NAMESPACE,
+    )
+    optree.register_pytree_node(  # behavior differs from the global registration
+        Pair,
+        lambda t: ((t.b, t.a), None, None),
+        lambda m, c: Pair(c[1], c[0]),
+        namespace='behavior_change',
+    )
+    optree.register_pytree_node(
+        Single,
+        lambda t: ((t.x,), None, None),
+        lambda m, c: Single(c[0]),
+        namespace='behavior_change',
+    )
+    try:
+        outer = optree.tree_structure(Pair(0, 0))
+        inner = optree.tree_structure(Single(0), namespace='behavior_change')
+        assert outer.namespace == ''
+        assert inner.namespace == 'behavior_change'
+        with pytest.raises(ValueError, match='different registration'):
+            outer.compose(inner)
+
+        # `tree_transpose` builds its expected structure with `compose`, so the rejection surfaces
+        # through the public API too (here via its structure-mismatch diagnostic path).
+        with pytest.raises(ValueError, match='different registration'):
+            optree.tree_transpose(outer, inner, [1, 2, 3])
+
+        # `broadcast_to_common_suffix` adopts the namespace the same way.
+        self_spec = optree.tree_structure({'k': Pair(0, 0)})
+        other_spec = optree.tree_structure({'k': Single(0)}, namespace='behavior_change')
+        with pytest.raises(ValueError, match='different registration'):
+            self_spec.broadcast_to_common_suffix(other_spec)
+    finally:
+        optree.unregister_pytree_node(Pair, namespace=GLOBAL_NAMESPACE)
+        optree.unregister_pytree_node(Pair, namespace='behavior_change')
+        optree.unregister_pytree_node(Single, namespace='behavior_change')
+
+
+def test_treespec_compose_allows_compatible_namespace_merge():
+    # The namespace-merge rejection must not over-reject: a custom type registered only globally
+    # resolves identically under any namespace (via global fallback), so merging an empty-namespace
+    # spec that uses it into another namespace is allowed and the result stays consistent.
+    class GlobalOnly:
+        def __init__(self, a, b):
+            self.a, self.b = a, b
+
+    optree.register_pytree_node(
+        GlobalOnly,
+        lambda t: ((t.a, t.b), None, None),
+        lambda m, c: GlobalOnly(c[0], c[1]),
+        namespace=GLOBAL_NAMESPACE,
+    )
+    try:
+        outer = optree.tree_structure(GlobalOnly(0, 0))
+        assert outer.namespace == ''
+
+        # Both empty -> the merge stays in the global namespace.
+        assert outer.compose(optree.tree_structure(0)).namespace == ''
+
+        # Empty side (global-only custom) merged into a namespace: allowed, adopts the namespace,
+        # and unflattens consistently (the global registration is used throughout).
+        with optree.dict_insertion_ordered(True, namespace='no_override'):
+            inner = optree.tree_structure({'x': 0}, namespace='no_override')
+        assert inner.namespace == 'no_override'
+        composed = outer.compose(inner)
+        assert composed.namespace == 'no_override'
+        result = optree.tree_unflatten(composed, [1, 2])
+        assert isinstance(result, GlobalOnly)
+        assert result.a == {'x': 1}
+        assert result.b == {'x': 2}
+
+        # The cross-namespace merge equals building the composed structure directly with `tree_map`
+        # in the adopted namespace -- compose's defining identity.
+        expected = optree.tree_structure(
+            optree.tree_map(lambda _: {'x': 0}, GlobalOnly(0, 0), namespace='no_override'),
+            namespace='no_override',
+        )
+        assert composed == expected
+
+        # broadcast_to_common_suffix likewise allows the compatible merge.
+        broadcasted = outer.broadcast_to_common_suffix(
+            optree.tree_structure(GlobalOnly(0, 0), namespace='no_override'),
+        )
+        assert broadcasted.namespace == 'no_override'
+    finally:
+        optree.unregister_pytree_node(GlobalOnly, namespace=GLOBAL_NAMESPACE)
+
+
+def test_treespec_compose_rejects_namespace_override_with_different_arity():
+    # A type registered globally flattens both members as children (arity 2); a namespace override
+    # flattens one member as a child and stores the other as node metadata (arity 1). Both
+    # registrations round-trip, but merging an empty-namespace spec (global, arity 2) into that
+    # namespace must be rejected: the composed spec would claim the namespace while carrying an
+    # arity-2 node that the namespace's registration cannot unflatten.
+    class TwoMember:
+        def __init__(self, a, b):
+            self.a, self.b = a, b
+
+        def __eq__(self, other):
+            return isinstance(other, TwoMember) and (self.a, self.b) == (other.a, other.b)
+
+        __hash__ = None
+
+    optree.register_pytree_node(
+        TwoMember,
+        lambda t: ((t.a, t.b), None, None),  # global: both members are children
+        lambda metadata, children: TwoMember(children[0], children[1]),
+        namespace=GLOBAL_NAMESPACE,
+    )
+    optree.register_pytree_node(
+        TwoMember,
+        lambda t: ((t.a,), t.b, None),  # override: one child, the other is metadata
+        lambda metadata, children: TwoMember(children[0], metadata),
+        namespace='arity_change',
+    )
+    try:
+        obj = TwoMember(1, 2)
+
+        # Both registrations round-trip on their own.
+        global_leaves, global_spec = optree.tree_flatten(obj)
+        assert global_leaves == [1, 2]
+        assert optree.tree_unflatten(global_spec, global_leaves) == obj
+        custom_leaves, custom_spec = optree.tree_flatten(obj, namespace='arity_change')
+        assert custom_leaves == [1]
+        assert optree.tree_unflatten(custom_spec, custom_leaves) == obj
+
+        assert global_spec.namespace == ''
+        assert global_spec.num_leaves == 2
+        assert custom_spec.namespace == 'arity_change'
+        assert custom_spec.num_leaves == 1
+        with pytest.raises(ValueError, match='different registration'):
+            global_spec.compose(custom_spec)
+    finally:
+        optree.unregister_pytree_node(TwoMember, namespace=GLOBAL_NAMESPACE)
+        optree.unregister_pytree_node(TwoMember, namespace='arity_change')
+
+
 def test_treespec_is_prefix_nested_dict_key_reorder():
     # Regression: `IsPrefix` reorders a dict node's children in a working copy of the traversal to
     # make key order irrelevant. When a NESTED dict also needed reordering, it indexed the pristine

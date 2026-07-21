@@ -185,6 +185,23 @@ namespace optree {
     }
 }
 
+std::optional<py::object> PyTreeSpec::FindReregisteredCustomType(
+    const std::string &target_namespace) const {
+    for (const Node &node : m_traversal) {
+        if (node.kind == PyTreeKind::Custom) [[unlikely]] {
+            const auto registration =
+                (m_none_is_leaf
+                     ? PyTreeTypeRegistry::Lookup<NONE_IS_LEAF>(node.custom->type, target_namespace)
+                     : PyTreeTypeRegistry::Lookup<NONE_IS_NODE>(node.custom->type,
+                                                                target_namespace));
+            if (registration != node.custom) [[unlikely]] {
+                return node.custom->type;
+            }
+        }
+    }
+    return {};
+}
+
 // NOLINTNEXTLINE[readability-function-cognitive-complexity]
 /*static*/ std::tuple<ssize_t, ssize_t, ssize_t, ssize_t> PyTreeSpec::BroadcastToCommonSuffixImpl(
     std::vector<Node> &nodes,
@@ -419,12 +436,39 @@ std::unique_ptr<PyTreeSpec> PyTreeSpec::BroadcastToCommonSuffix(const PyTreeSpec
         throw py::value_error(oss.str());
     }
 
+    const std::string &target_namespace = m_namespace.empty() ? other.m_namespace : m_namespace;
     auto treespec = std::make_unique<PyTreeSpec>();
     treespec->m_none_is_leaf = m_none_is_leaf;
-    if (other.m_namespace.empty()) [[likely]] {
-        treespec->m_namespace = m_namespace;
+    treespec->m_namespace = target_namespace;
+
+    if (!target_namespace.empty()) [[likely]] {
+        // The compatibility check above rejects two distinct non-empty namespaces, so the adopted
+        // namespace equals one side's namespace and at most the other (empty) side differs from it.
+        // Re-check only that side: adopting a namespace under which its custom nodes resolve to a
+        // different registration would silently rebind them (the result keeps the original ones).
+        std::optional<py::object> reregistered_type{};
+        if (target_namespace != m_namespace) [[unlikely]] {
+            // Check if any custom types in the current treespec resolve to a different
+            // registration.
+            EXPECT_EQ(target_namespace, other.m_namespace, "Namespace mismatch.");
+            EXPECT_TRUE(m_namespace.empty(), "Namespace mismatch.");
+            reregistered_type = FindReregisteredCustomType(target_namespace);
+        } else if (target_namespace != other.m_namespace) [[unlikely]] {
+            // Check if any custom types in the other treespec resolve to a different registration.
+            EXPECT_EQ(target_namespace, m_namespace, "Namespace mismatch.");
+            EXPECT_TRUE(other.m_namespace.empty(), "Namespace mismatch.");
+            reregistered_type = other.FindReregisteredCustomType(target_namespace);
+        }
+        if (reregistered_type) [[unlikely]] {
+            std::ostringstream oss{};
+            oss << "PyTreeSpecs cannot be merged: custom PyTree type " << PyRepr(*reregistered_type)
+                << " resolves to a different registration in namespace " << PyRepr(target_namespace)
+                << ".";
+            throw py::value_error(oss.str());
+        }
     } else [[unlikely]] {
-        treespec->m_namespace = other.m_namespace;
+        EXPECT_TRUE(m_namespace.empty(), "Namespace mismatch.");
+        EXPECT_TRUE(other.m_namespace.empty(), "Namespace mismatch.");
     }
 
     const ssize_t num_nodes = GetNumNodes();
@@ -592,12 +636,38 @@ std::unique_ptr<PyTreeSpec> PyTreeSpec::Compose(const PyTreeSpec &inner) const {
         throw py::value_error(oss.str());
     }
 
+    const std::string &target_namespace = m_namespace.empty() ? inner.m_namespace : m_namespace;
     auto treespec = std::make_unique<PyTreeSpec>();
     treespec->m_none_is_leaf = m_none_is_leaf;
-    if (inner.m_namespace.empty()) [[likely]] {
-        treespec->m_namespace = m_namespace;
+    treespec->m_namespace = target_namespace;
+
+    if (!target_namespace.empty()) [[likely]] {
+        // The compatibility check above rejects two distinct non-empty namespaces, so the adopted
+        // namespace equals one side's namespace and at most the other (empty) side differs from it.
+        // Re-check only that side: adopting a namespace under which its custom nodes resolve to a
+        // different registration would silently rebind them (the result keeps the original ones).
+        std::optional<py::object> reregistered_type{};
+        if (target_namespace != m_namespace) [[unlikely]] {
+            // Check if any custom types in the outer treespec resolve to a different registration.
+            EXPECT_EQ(target_namespace, inner.m_namespace, "Namespace mismatch.");
+            EXPECT_TRUE(m_namespace.empty(), "Namespace mismatch.");
+            reregistered_type = FindReregisteredCustomType(target_namespace);
+        } else if (target_namespace != inner.m_namespace) [[unlikely]] {
+            // Check if any custom types in the inner treespec resolve to a different registration.
+            EXPECT_EQ(target_namespace, m_namespace, "Namespace mismatch.");
+            EXPECT_TRUE(inner.m_namespace.empty(), "Namespace mismatch.");
+            reregistered_type = inner.FindReregisteredCustomType(target_namespace);
+        }
+        if (reregistered_type) [[unlikely]] {
+            std::ostringstream oss{};
+            oss << "PyTreeSpecs cannot be merged: custom PyTree type " << PyRepr(*reregistered_type)
+                << " resolves to a different registration in namespace " << PyRepr(target_namespace)
+                << ".";
+            throw py::value_error(oss.str());
+        }
     } else [[unlikely]] {
-        treespec->m_namespace = inner.m_namespace;
+        EXPECT_TRUE(m_namespace.empty(), "Namespace mismatch.");
+        EXPECT_TRUE(inner.m_namespace.empty(), "Namespace mismatch.");
     }
 
     const ssize_t num_outer_leaves = GetNumLeaves();

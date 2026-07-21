@@ -366,6 +366,13 @@ private:
         const std::vector<Node> &other_traversal,
         const ssize_t &other_pos);
 
+    // Return the type of the first custom node that resolves to a different registration under
+    // `target_namespace` than it currently holds, or a null object if all custom nodes are
+    // consistent. Used by namespace merges (compose / broadcast) to detect an unsafe re-tagging;
+    // the caller raises the error.
+    [[nodiscard]] std::optional<py::object> FindReregisteredCustomType(
+        const std::string &target_namespace) const;
+
     template <bool PassRawNode = true>
     [[nodiscard]] py::object WalkImpl(
         const py::iterable &leaves,
