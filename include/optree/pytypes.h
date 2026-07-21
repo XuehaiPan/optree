@@ -424,23 +424,45 @@ inline py::tuple StructSequenceGetFieldsImpl(const py::handle &type) {
         import sys
 
         StructSequenceFieldType = type(type(sys.version_info).major)
-        indices_by_name = {
-            name: member.index
+        # PyPy has no unnamed fields; a descriptor's `.index` is its sequence position.
+        # Map index -> name and defensively fill any missing (unnamed) slot with the marker.
+        names_by_index = {
+            member.index: name
             for name, member in vars(cls).items()
             if isinstance(member, StructSequenceFieldType)
         }
-        fields.extend(sorted(indices_by_name, key=indices_by_name.get)[:cls.n_sequence_fields])
+        fields.extend(
+            names_by_index.get(index, unnamed_field) for index in range(cls.n_sequence_fields)
+        )
         )py",
-        py::dict(py::arg("cls") = type, py::arg("fields") = fields));
+        py::dict(py::arg("cls") = type,
+                 py::arg("fields") = fields,
+                 py::arg("unnamed_field") = py::str(PyStructSequence_UnnamedField)));
     return py::tuple{fields};
 #else
     const auto n_sequence_fields = thread_safe_cast<py::ssize_t>(
         EVALUATE_WITH_LOCK_HELD(py::getattr(type, "n_sequence_fields"), type));
     const auto * const members = reinterpret_cast<PyTypeObject *>(type.ptr())->tp_members;
+    // `tp_members` lists only the NAMED fields -- CPython packs them and skips every
+    // `PyStructSequence_UnnamedField` slot -- but each member carries a byte `offset` that encodes
+    // its sequence index. A struct sequence stores its items in the tuple `ob_item` array, so the
+    // base offset is `offsetof(PyTupleObject, ob_item)`. Map each named member back to its slot by
+    // offset and leave unnamed slots as the unnamed marker. Indexing `members[i]` by position (the
+    // old behavior) mislabels every slot after the first unnamed one with a trailing hidden field's
+    // name (e.g. `os.stat_result` slots 7/8/9 wrongly reported as
+    // `st_atime`/`st_mtime`/`st_ctime`).
     py::tuple fields{n_sequence_fields};
     for (py::ssize_t i = 0; i < n_sequence_fields; ++i) {
-        // NOLINTNEXTLINE[cppcoreguidelines-pro-bounds-pointer-arithmetic]
-        TupleSetItem(fields, i, py::str(members[i].name));
+        TupleSetItem(fields, i, py::str(PyStructSequence_UnnamedField));
+    }
+    for (const PyMemberDef *member = members; member != nullptr && member->name != nullptr;
+         ++member) {
+        const py::ssize_t index =
+            (member->offset - py::ssize_t_cast(offsetof(PyTupleObject, ob_item))) /
+            py::ssize_t_cast(sizeof(PyObject *));
+        if (index >= 0 && index < n_sequence_fields) [[likely]] {
+            TupleSetItem(fields, index, py::str(member->name));
+        }
     }
     return fields;
 #endif

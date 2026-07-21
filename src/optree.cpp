@@ -51,6 +51,7 @@ void BuildModule(py::module_ &mod) {  // NOLINT[runtime/references]
     mod.doc() = "Optimized PyTree Utilities. (C extension module built from " +
                 std::string(__FILE_RELPATH_FROM_PROJECT_ROOT__) + ")";
     mod.attr("Py_TPFLAGS_BASETYPE") = py::int_(Py_TPFLAGS_BASETYPE);
+    mod.attr("PyStructSequence_UnnamedField") = py::str(PyStructSequence_UnnamedField);
 
     // Meta information during build
     py::dict BUILDTIME_METADATA{};

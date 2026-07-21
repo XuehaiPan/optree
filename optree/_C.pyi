@@ -37,6 +37,9 @@ from optree.typing import (
 # Set if the type allows subclassing (see CPython's Include/object.h)
 Py_TPFLAGS_BASETYPE: Final[int]  # (1UL << 10)
 
+# The name reported for an unnamed PyStructSequence slot (see CPython's Include/structseq.h)
+PyStructSequence_UnnamedField: Final[str]  # 'unnamed field'
+
 # Meta-information during build-time
 BUILDTIME_METADATA: Final[MappingProxyType[str, Any]]
 PY_VERSION: Final[str]

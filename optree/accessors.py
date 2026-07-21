@@ -325,7 +325,10 @@ class StructSequenceEntry(SequenceEntry[_T]):
 
     def codify(self, /, node: str = '') -> str:
         """Generate code for accessing the path entry."""
-        return f'{node}.{self.field}'
+        field = self.field
+        if not field.isidentifier():  # an unnamed PyStructSequence slot -> access by index
+            return f'{node}[{self.entry}]'
+        return f'{node}.{field}'
 
 
 class DataclassEntry(GetAttrEntry):

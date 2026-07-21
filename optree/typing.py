@@ -550,6 +550,11 @@ def is_structseq_class(cls: type, /) -> bool:
 # pylint: disable-next=line-too-long
 StructSequenceFieldType: type[types.MemberDescriptorType] = type(type(sys.version_info).major)  # type: ignore[assignment]
 
+# The name reported for an unnamed PyStructSequence slot; CPython's C-level marker (not a valid
+# identifier, so accessors fall back to index access for such slots).
+# pylint: disable-next=invalid-name
+PyStructSequence_UnnamedField: str = _C.PyStructSequence_UnnamedField  # 'unnamed field'
+
 
 @_override_with_(_C.structseq_fields)
 def structseq_fields(obj: tuple | type[tuple], /) -> tuple[str, ...]:
@@ -564,19 +569,33 @@ def structseq_fields(obj: tuple | type[tuple], /) -> tuple[str, ...]:
             raise TypeError(f'Expected an instance of PyStructSequence type, got {obj!r}.')
 
     if platform.python_implementation() == 'PyPy':  # pragma: pypy cover
-        indices_by_name = {
-            name: member.index  # type: ignore[attr-defined]
+        # PyPy has no unnamed sequence fields: a field descriptor exposes `.index` as its sequence
+        # position, and hidden fields have an index >= n_sequence_fields. (`n_unnamed_fields == 0`,
+        # see PyPy's `lib_pypy/_structseq.py`) Map index -> name and defensively fill any missing
+        # (i.e. unnamed) sequence slot with the marker, should that invariant ever change.
+        names_by_index = {
+            member.index: name  # type: ignore[attr-defined]
             for name, member in vars(cls).items()
             if isinstance(member, StructSequenceFieldType)
         }
-        fields = sorted(indices_by_name, key=indices_by_name.get)  # type: ignore[arg-type]
-    else:  # pragma: pypy no cover
-        fields = [
-            name
-            for name, member in vars(cls).items()
-            if isinstance(member, StructSequenceFieldType)
-        ]
-    return tuple(fields[: cls.n_sequence_fields])  # type: ignore[attr-defined]
+        return tuple(
+            names_by_index.get(index, PyStructSequence_UnnamedField)
+            for index in range(cls.n_sequence_fields)  # type: ignore[attr-defined]
+        )
+
+    # pragma: pypy no cover
+    # CPython's `member_descriptor` does not expose the field offset, so the exact position of an
+    # unnamed slot is not recoverable in pure Python (the C++ implementation maps by offset). Assume
+    # unnamed sequence fields trail the named ones (as in `os.stat_result`): keep the named sequence
+    # fields, then fill the remaining slots with the marker.
+    named = [
+        name for name, member in vars(cls).items() if isinstance(member, StructSequenceFieldType)
+    ]
+    n_sequence_fields: int = cls.n_sequence_fields  # type: ignore[attr-defined]
+    n_unnamed_fields: int = cls.n_unnamed_fields  # type: ignore[attr-defined]
+    return tuple(named[: n_sequence_fields - n_unnamed_fields]) + (
+        (PyStructSequence_UnnamedField,) * n_unnamed_fields
+    )
 
 
 del _tp_cache
