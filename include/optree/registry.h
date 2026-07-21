@@ -230,7 +230,9 @@ private:
 
     template <bool NoneIsLeaf>
     [[nodiscard]] static RegistrationPtr UnregisterImpl(const py::object &cls,
-                                                        const std::string &registry_namespace);
+                                                        const std::string &registry_namespace,
+                                                        const bool &is_structsequence_class,
+                                                        const bool &is_namedtuple_class);
 
     // Initialize the registry for the current interpreter.
     static void Init();

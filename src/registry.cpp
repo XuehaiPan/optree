@@ -159,28 +159,32 @@ template <bool NoneIsLeaf>
         }
     }
 
-    const scoped_write_lock lock{sm_mutex};
+    {
+        const scoped_write_lock lock{sm_mutex};
 
-    RegisterImpl<NONE_IS_NODE>(cls,
-                               flatten_func,
-                               unflatten_func,
-                               path_entry_type,
-                               registry_namespace);
-    RegisterImpl<NONE_IS_LEAF>(cls,
-                               flatten_func,
-                               unflatten_func,
-                               path_entry_type,
-                               registry_namespace);
-    cls.inc_ref();
-    flatten_func.inc_ref();
-    unflatten_func.inc_ref();
-    path_entry_type.inc_ref();
+        RegisterImpl<NONE_IS_NODE>(cls,
+                                   flatten_func,
+                                   unflatten_func,
+                                   path_entry_type,
+                                   registry_namespace);
+        RegisterImpl<NONE_IS_LEAF>(cls,
+                                   flatten_func,
+                                   unflatten_func,
+                                   path_entry_type,
+                                   registry_namespace);
+        cls.inc_ref();
+        flatten_func.inc_ref();
+        unflatten_func.inc_ref();
+        path_entry_type.inc_ref();
+    }
 }
 
 template <bool NoneIsLeaf>
 /*static*/ PyTreeTypeRegistry::RegistrationPtr PyTreeTypeRegistry::UnregisterImpl(
     const py::object &cls,
-    const std::string &registry_namespace) {
+    const std::string &registry_namespace,
+    const bool &is_structsequence_class,
+    const bool &is_namedtuple_class) {
     auto &registry = GetSingleton<NoneIsLeaf>();
 
     if (registry.m_builtins_types.find(cls) != registry.m_builtins_types.end()) [[unlikely]] {
@@ -193,10 +197,10 @@ template <bool NoneIsLeaf>
         if (it == registry.m_registrations.end()) [[unlikely]] {
             std::ostringstream oss{};
             oss << "PyTree type " << PyRepr(cls) << " ";
-            if (IsStructSequenceClass(cls)) [[unlikely]] {
+            if (is_structsequence_class) [[unlikely]] {
                 oss << "is a class of `PyStructSequence`, "
                     << "which is not explicitly registered in the global namespace.";
-            } else if (IsNamedTupleClass(cls)) [[unlikely]] {
+            } else if (is_namedtuple_class) [[unlikely]] {
                 oss << "is a subclass of `collections.namedtuple`, "
                     << "which is not explicitly registered in the global namespace.";
             } else [[likely]] {
@@ -213,10 +217,10 @@ template <bool NoneIsLeaf>
         if (named_it == registry.m_named_registrations.end()) [[unlikely]] {
             std::ostringstream oss{};
             oss << "PyTree type " << PyRepr(cls) << " ";
-            if (IsStructSequenceClass(cls)) [[unlikely]] {
+            if (is_structsequence_class) [[unlikely]] {
                 oss << "is a class of `PyStructSequence`, "
                     << "which is not explicitly registered ";
-            } else if (IsNamedTupleClass(cls)) [[unlikely]] {
+            } else if (is_namedtuple_class) [[unlikely]] {
                 oss << "is a subclass of `collections.namedtuple`, "
                     << "which is not explicitly registered ";
             } else [[likely]] {
@@ -233,18 +237,34 @@ template <bool NoneIsLeaf>
 
 /*static*/ void PyTreeTypeRegistry::Unregister(const py::object &cls,
                                                const std::string &registry_namespace) {
-    const scoped_write_lock lock{sm_mutex};
+    // Classify the type BEFORE taking `sm_mutex`. On the not-found path `UnregisterImpl` builds its
+    // error message from `IsStructSequenceClass` / `IsNamedTupleClass`, which run Python and
+    // release the GIL; calling them while holding `sm_mutex` in write mode inverts the GIL <->
+    // `sm_mutex` lock order and deadlocks a concurrent flatten that holds the GIL while waiting on
+    // `sm_mutex` in read mode (mirrors `Register`).
+    const bool is_structsequence_class = IsStructSequenceClass(cls);
+    const bool is_namedtuple_class = IsNamedTupleClass(cls);
 
-    const auto registration1 = UnregisterImpl<NONE_IS_NODE>(cls, registry_namespace);
-    const auto registration2 = UnregisterImpl<NONE_IS_LEAF>(cls, registry_namespace);
-    EXPECT_TRUE(registration1->type.is(registration2->type));
-    EXPECT_TRUE(registration1->flatten_func.is(registration2->flatten_func));
-    EXPECT_TRUE(registration1->unflatten_func.is(registration2->unflatten_func));
-    EXPECT_TRUE(registration1->path_entry_type.is(registration2->path_entry_type));
-    registration1->type.dec_ref();
-    registration1->flatten_func.dec_ref();
-    registration1->unflatten_func.dec_ref();
-    registration1->path_entry_type.dec_ref();
+    {
+        const scoped_write_lock lock{sm_mutex};
+
+        const auto registration1 = UnregisterImpl<NONE_IS_NODE>(cls,
+                                                                registry_namespace,
+                                                                is_structsequence_class,
+                                                                is_namedtuple_class);
+        const auto registration2 = UnregisterImpl<NONE_IS_LEAF>(cls,
+                                                                registry_namespace,
+                                                                is_structsequence_class,
+                                                                is_namedtuple_class);
+        EXPECT_TRUE(registration1->type.is(registration2->type));
+        EXPECT_TRUE(registration1->flatten_func.is(registration2->flatten_func));
+        EXPECT_TRUE(registration1->unflatten_func.is(registration2->unflatten_func));
+        EXPECT_TRUE(registration1->path_entry_type.is(registration2->path_entry_type));
+        registration1->type.dec_ref();
+        registration1->flatten_func.dec_ref();
+        registration1->unflatten_func.dec_ref();
+        registration1->path_entry_type.dec_ref();
+    }
 }
 
 template <bool NoneIsLeaf>
