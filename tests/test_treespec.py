@@ -1026,6 +1026,90 @@ def test_treespec_compose_rejects_namespace_override_with_different_arity():
         optree.unregister_pytree_node(TwoMember, namespace='arity_change')
 
 
+def test_treespec_transform_rejects_incompatible_namespace_merge():
+    # `transform` unifies the namespace across the input spec and the transform outputs. If that
+    # unified (non-empty) namespace rebinds a custom node -- e.g. the input's globally-resolved
+    # custom node -- to a different registration, the transform must be rejected (same class as the
+    # compose / broadcast merge rejection). A globally-only-registered type is still allowed via
+    # fallback.
+    class TransformT:
+        def __init__(self, a, b):
+            self.a, self.b = a, b
+
+    class TransformS:
+        def __init__(self, x):
+            self.x = x
+
+    class TransformGlobal:
+        def __init__(self, a, b):
+            self.a, self.b = a, b
+
+    optree.register_pytree_node(
+        TransformT,
+        lambda t: ((t.a, t.b), None, None),
+        lambda m, c: TransformT(c[0], c[1]),
+        namespace=GLOBAL_NAMESPACE,
+    )
+    optree.register_pytree_node(
+        TransformT,
+        lambda t: ((t.b, t.a), None, None),
+        lambda m, c: TransformT(c[1], c[0]),
+        namespace='transform_change',
+    )
+    optree.register_pytree_node(
+        TransformS,
+        lambda t: ((t.x,), None, None),
+        lambda m, c: TransformS(c[0]),
+        namespace='transform_change',
+    )
+    optree.register_pytree_node(
+        TransformGlobal,
+        lambda t: ((t.a, t.b), None, None),
+        lambda m, c: TransformGlobal(c[0], c[1]),
+        namespace=GLOBAL_NAMESPACE,
+    )
+
+    def to_namespaced_leaf(_):
+        return optree.tree_structure(TransformS(0), namespace='transform_change')
+
+    def to_namespaced_node(nodespec):
+        # Outer tuple -> globally-registered TransformT; inner lists -> 'transform_change' TransformS.
+        if nodespec.type is tuple:
+            return optree.tree_structure(TransformT(0, 0))
+        return to_namespaced_leaf(None)
+
+    try:
+        # The rejection must fire for every `(f_node, f_leaf)` combination that puts a
+        # globally-resolved custom node under the non-empty unified namespace.
+
+        # (None, f_leaf): the input's global TransformT is kept, f_leaf injects the namespace.
+        outer = optree.tree_structure(TransformT(0, 0))
+        assert outer.namespace == ''
+        with pytest.raises(ValueError, match='different registration'):
+            outer.transform(None, to_namespaced_leaf)
+
+        # (f_node, None): f_node alone yields a global TransformT above 'transform_change' children.
+        with pytest.raises(ValueError, match='different registration'):
+            optree.tree_structure(([0], [0])).transform(to_namespaced_node, None)
+
+        # (f_node, f_leaf): f_node injects the global TransformT, f_leaf injects the namespace.
+        with pytest.raises(ValueError, match='different registration'):
+            optree.tree_structure([0, 0]).transform(
+                lambda _: optree.tree_structure(TransformT(0, 0)),
+                to_namespaced_leaf,
+            )
+
+        # Compatible: TransformGlobal resolves identically under any namespace via fallback.
+        global_outer = optree.tree_structure(TransformGlobal(0, 0))
+        transformed = global_outer.transform(None, to_namespaced_leaf)
+        assert transformed.namespace == 'transform_change'
+    finally:
+        optree.unregister_pytree_node(TransformT, namespace=GLOBAL_NAMESPACE)
+        optree.unregister_pytree_node(TransformT, namespace='transform_change')
+        optree.unregister_pytree_node(TransformS, namespace='transform_change')
+        optree.unregister_pytree_node(TransformGlobal, namespace=GLOBAL_NAMESPACE)
+
+
 def test_treespec_is_prefix_nested_dict_key_reorder():
     # Regression: `IsPrefix` reorders a dict node's children in a working copy of the traversal to
     # make key order irrelevant. When a NESTED dict also needed reordering, it indexed the pristine

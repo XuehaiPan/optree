@@ -616,6 +616,23 @@ std::unique_ptr<PyTreeSpec> PyTreeSpec::Transform(const std::optional<py::functi
               "Number of transformed tree nodes mismatch.");
     treespec->m_none_is_leaf = m_none_is_leaf;
     treespec->m_namespace = common_registry_namespace;
+
+    // Reject a transform whose unified namespace would rebind a custom node to a different
+    // registration than the one it holds (the result keeps each node's original registration; e.g.
+    // a globally-resolved custom node from the input under a non-empty unified namespace). Only
+    // relevant for a non-empty namespace: an empty one resolves every custom node globally.
+    if (!common_registry_namespace.empty()) [[unlikely]] {
+        if (const auto &reregistered_type =
+                treespec->FindReregisteredCustomType(common_registry_namespace)) [[unlikely]] {
+            std::ostringstream oss{};
+            oss << "PyTreeSpecs cannot be transformed: custom PyTree type "
+                << PyRepr(*reregistered_type)
+                << " resolves to a different registration in namespace "
+                << PyRepr(common_registry_namespace) << ".";
+            throw py::value_error(oss.str());
+        }
+    }
+
     treespec->m_traversal.shrink_to_fit();
     PYTREESPEC_SANITY_CHECK(*treespec);
     return treespec;
