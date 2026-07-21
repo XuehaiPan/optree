@@ -19,6 +19,7 @@ import copy
 import pickle
 import re
 import sys
+import warnings
 import weakref
 from collections import UserDict, UserList, namedtuple
 from dataclasses import dataclass
@@ -399,6 +400,43 @@ def test_register_pytree_node_namedtuple():
     )
     assert tree == optree.tree_unflatten(treespec3, leaves3)
     assert treespec1 != treespec3
+
+
+def test_register_pytree_node_warning_as_error_does_not_corrupt_registry():
+    # Registering a `namedtuple` / `PyStructSequence` subclass emits a `UserWarning`. Under
+    # warnings-as-errors that warning is raised as an exception; previously the C++ registry had
+    # already committed the registration and ignored the escalation, leaving corrupt state and a
+    # `SystemError`. The registration must instead be rolled back and the escalated warning raised.
+    mytuple = namedtuple('mytuple_warn_error', ['a', 'b'])  # noqa: PYI024
+    tree = mytuple(1, 2)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(UserWarning):
+            optree.register_pytree_node(
+                mytuple,
+                lambda t: (tuple(t), None, None),
+                lambda _, t: mytuple(*t),
+                namespace='mytuple_warn_error',
+            )
+
+    # The escalated registration must not have stuck (no custom node registered).
+    assert 'CustomTreeNode' not in str(
+        optree.tree_structure(tree, namespace='mytuple_warn_error'),
+    )
+
+    # A subsequent non-error registration must succeed cleanly, proving no half-committed state.
+    with pytest.warns(UserWarning, match=re.escape('is a subclass of `collections.namedtuple`')):
+        optree.register_pytree_node(
+            mytuple,
+            lambda t: (tuple(t), None, None),
+            lambda _, t: mytuple(*t),
+            namespace='mytuple_warn_error',
+        )
+    assert 'CustomTreeNode' in str(
+        optree.tree_structure(tree, namespace='mytuple_warn_error'),
+    )
+    optree.unregister_pytree_node(mytuple, namespace='mytuple_warn_error')
 
 
 def test_flatten_with_wrong_number_of_returns():

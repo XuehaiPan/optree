@@ -100,37 +100,37 @@ template <bool NoneIsLeaf>
     registration->flatten_func = py::reinterpret_borrow<py::function>(flatten_func);
     registration->unflatten_func = py::reinterpret_borrow<py::function>(unflatten_func);
     registration->path_entry_type = py::reinterpret_borrow<py::object>(path_entry_type);
+    // Emit the "already handled natively" override warning BEFORE inserting into the registry, so
+    // that under warnings-as-errors the escalated warning rejects the registration atomically
+    // rather than leaving the registry partially committed (see `Register`, which registers into
+    // two singletons; throwing here before any insert keeps both consistent).
     if (registry_namespace.empty()) [[unlikely]] {
+        if (IsStructSequenceClass(cls)) [[unlikely]] {
+            if (PyErr_WarnEx(PyExc_UserWarning,
+                             ("PyTree type " + PyRepr(cls) +
+                              " is a class of `PyStructSequence`, "
+                              "which is already registered in the global namespace. "
+                              "Override it with custom flatten/unflatten functions.")
+                                 .c_str(),
+                             /*stack_level=*/2) < 0) [[unlikely]] {
+                throw py::error_already_set();
+            }
+        } else if (IsNamedTupleClass(cls)) [[unlikely]] {
+            if (PyErr_WarnEx(PyExc_UserWarning,
+                             ("PyTree type " + PyRepr(cls) +
+                              " is a subclass of `collections.namedtuple`, "
+                              "which is already registered in the global namespace. "
+                              "Override it with custom flatten/unflatten functions.")
+                                 .c_str(),
+                             /*stack_level=*/2) < 0) [[unlikely]] {
+                throw py::error_already_set();
+            }
+        }
         if (!registry.m_registrations.emplace(cls, std::move(registration)).second) [[unlikely]] {
             throw py::value_error("PyTree type " + PyRepr(cls) +
                                   " is already registered in the global namespace.");
         }
-        if (IsStructSequenceClass(cls)) [[unlikely]] {
-            PyErr_WarnEx(PyExc_UserWarning,
-                         ("PyTree type " + PyRepr(cls) +
-                          " is a class of `PyStructSequence`, "
-                          "which is already registered in the global namespace. "
-                          "Override it with custom flatten/unflatten functions.")
-                             .c_str(),
-                         /*stack_level=*/2);
-        } else if (IsNamedTupleClass(cls)) [[unlikely]] {
-            PyErr_WarnEx(PyExc_UserWarning,
-                         ("PyTree type " + PyRepr(cls) +
-                          " is a subclass of `collections.namedtuple`, "
-                          "which is already registered in the global namespace. "
-                          "Override it with custom flatten/unflatten functions.")
-                             .c_str(),
-                         /*stack_level=*/2);
-        }
     } else [[likely]] {
-        if (!registry.m_named_registrations
-                 .emplace(std::make_pair(registry_namespace, cls), std::move(registration))
-                 .second) [[unlikely]] {
-            std::ostringstream oss{};
-            oss << "PyTree type " << PyRepr(cls) << " is already registered in namespace "
-                << PyRepr(registry_namespace) << ".";
-            throw py::value_error(oss.str());
-        }
         if (IsStructSequenceClass(cls)) [[unlikely]] {
             std::ostringstream oss{};
             oss << "PyTree type " << PyRepr(cls)
@@ -138,9 +138,10 @@ template <bool NoneIsLeaf>
                    "which is already registered in the global namespace. "
                    "Override it with custom flatten/unflatten functions in namespace "
                 << PyRepr(registry_namespace) << ".";
-            PyErr_WarnEx(PyExc_UserWarning,
-                         oss.str().c_str(),
-                         /*stack_level=*/2);
+            if (PyErr_WarnEx(PyExc_UserWarning, oss.str().c_str(), /*stack_level=*/2) < 0)
+                [[unlikely]] {
+                throw py::error_already_set();
+            }
         } else if (IsNamedTupleClass(cls)) [[unlikely]] {
             std::ostringstream oss{};
             oss << "PyTree type " << PyRepr(cls)
@@ -148,9 +149,18 @@ template <bool NoneIsLeaf>
                    "which is already registered in the global namespace. "
                    "Override it with custom flatten/unflatten functions in namespace "
                 << PyRepr(registry_namespace) << ".";
-            PyErr_WarnEx(PyExc_UserWarning,
-                         oss.str().c_str(),
-                         /*stack_level=*/2);
+            if (PyErr_WarnEx(PyExc_UserWarning, oss.str().c_str(), /*stack_level=*/2) < 0)
+                [[unlikely]] {
+                throw py::error_already_set();
+            }
+        }
+        if (!registry.m_named_registrations
+                 .emplace(std::make_pair(registry_namespace, cls), std::move(registration))
+                 .second) [[unlikely]] {
+            std::ostringstream oss{};
+            oss << "PyTree type " << PyRepr(cls) << " is already registered in namespace "
+                << PyRepr(registry_namespace) << ".";
+            throw py::value_error(oss.str());
         }
     }
 }
