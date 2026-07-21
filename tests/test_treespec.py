@@ -1129,6 +1129,67 @@ def test_treespec_transform_rejects_incompatible_namespace_merge():
         optree.unregister_pytree_node(TransformGlobal, namespace=GLOBAL_NAMESPACE)
 
 
+def test_treespec_from_collection_rejects_incompatible_namespace_promotion():
+    # `treespec_from_collection` promotes an empty caller namespace to a child spec's namespace. If
+    # that promoted namespace rebinds a custom node the collection resolved globally (the root node,
+    # or a globally-resolved child) to a different registration, the result would claim the namespace
+    # while carrying the wrong registration -- it must be rejected, exactly like compose / transform /
+    # broadcast. A globally-only-registered type is still allowed via fallback.
+    class FromCollT:
+        def __init__(self, a, b):
+            self.a, self.b = a, b
+
+    class FromCollS:
+        def __init__(self, x):
+            self.x = x
+
+    class FromCollGlobal:
+        def __init__(self, a, b):
+            self.a, self.b = a, b
+
+    optree.register_pytree_node(
+        FromCollT,
+        lambda t: ((t.a, t.b), None, None),
+        lambda m, c: FromCollT(c[0], c[1]),
+        namespace=GLOBAL_NAMESPACE,
+    )
+    optree.register_pytree_node(
+        FromCollT,
+        lambda t: ((t.b, t.a), None, None),
+        lambda m, c: FromCollT(c[1], c[0]),
+        namespace='from_coll_change',
+    )
+    optree.register_pytree_node(
+        FromCollS,
+        lambda t: ((t.x,), None, None),
+        lambda m, c: FromCollS(c[0]),
+        namespace='from_coll_change',
+    )
+    optree.register_pytree_node(
+        FromCollGlobal,
+        lambda t: ((t.a, t.b), None, None),
+        lambda m, c: FromCollGlobal(c[0], c[1]),
+        namespace=GLOBAL_NAMESPACE,
+    )
+    try:
+        # Incompatible: the globally-resolved FromCollT rebinds under the promoted namespace.
+        foo = optree.tree_structure(FromCollT(0, 0))
+        child = optree.tree_structure(FromCollS(0), namespace='from_coll_change')
+        assert foo.namespace == ''
+        with pytest.raises(ValueError, match='different registration'):
+            optree.treespec_from_collection([foo, child], namespace='')
+
+        # Compatible: FromCollGlobal resolves identically under any namespace via fallback.
+        global_spec = optree.tree_structure(FromCollGlobal(0, 0))
+        promoted = optree.treespec_from_collection([global_spec, child], namespace='')
+        assert promoted.namespace == 'from_coll_change'
+    finally:
+        optree.unregister_pytree_node(FromCollT, namespace=GLOBAL_NAMESPACE)
+        optree.unregister_pytree_node(FromCollT, namespace='from_coll_change')
+        optree.unregister_pytree_node(FromCollS, namespace='from_coll_change')
+        optree.unregister_pytree_node(FromCollGlobal, namespace=GLOBAL_NAMESPACE)
+
+
 def test_treespec_is_prefix_nested_dict_key_reorder():
     # Regression: `IsPrefix` reorders a dict node's children in a working copy of the traversal to
     # make key order irrelevant. When a NESTED dict also needed reordering, it indexed the pristine

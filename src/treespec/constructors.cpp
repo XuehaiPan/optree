@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>  // std::copy
 #include <iterator>   // std::back_inserter
 #include <memory>     // std::unique_ptr, std::make_unique
+#include <optional>   // std::optional
 #include <sstream>    // std::ostringstream
 #include <stdexcept>  // std::runtime_error
 #include <string>     // std::string
@@ -284,6 +285,23 @@ template <bool NoneIsLeaf>
     out->m_traversal.emplace_back(std::move(node));
     out->m_none_is_leaf = NoneIsLeaf;
     out->m_namespace = registry_namespace;
+    // Reject a namespace promotion (an empty caller namespace adopting a child spec's namespace)
+    // that would rebind a custom node to a different registration than the one it holds -- e.g. the
+    // root node, or a globally-resolved child, resolved in the global registry while the promoted
+    // namespace registers the type differently. The result keeps each node's original registration,
+    // mirroring the compose / transform / broadcast merge guards. Skipped for an empty namespace,
+    // which resolves every custom node globally.
+    if (!registry_namespace.empty()) [[unlikely]] {
+        if (const auto reregistered_type = out->FindReregisteredCustomType(registry_namespace))
+            [[unlikely]] {
+            std::ostringstream oss{};
+            oss << "PyTreeSpecs cannot be composed into a collection: custom PyTree type "
+                << PyRepr(*reregistered_type)
+                << " resolves to a different registration in namespace "
+                << PyRepr(registry_namespace) << ".";
+            throw py::value_error(oss.str());
+        }
+    }
     out->m_traversal.shrink_to_fit();
     PYTREESPEC_SANITY_CHECK(*out);
     return out;
