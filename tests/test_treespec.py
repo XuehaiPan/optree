@@ -638,6 +638,88 @@ def test_treespec_pickle_missing_registration():
         treespec = pickle.loads(serialized)
 
 
+def test_treespec_setstate_rejects_malformed_state():
+    # `PyTreeSpec.__setstate__` (used by `pickle`) must reject structurally malformed state rather
+    # than build a corrupt spec that triggers out-of-bounds reads / crashes when later used. The
+    # per-node tuple layout is (kind, arity, node_data, node_entries, custom, num_leaves, num_nodes,
+    # original_keys); see `PyTreeSpec::FromPickleable`.
+    def setstate(state):
+        obj = optree.PyTreeSpec.__new__(optree.PyTreeSpec)
+        obj.__setstate__(state)
+        return obj
+
+    # Sanity: well-formed states still round-trip.
+    for spec in [
+        optree.tree_structure((0, 0)),
+        optree.tree_structure({'a': 0, 'b': 0}),
+        optree.tree_structure(defaultdict(int, {'a': 0, 'b': 0})),
+    ]:
+        assert setstate(spec.__getstate__()) == spec
+
+    malformed_exceptions = (RuntimeError, ValueError, TypeError)
+
+    # Negative arity.
+    with pytest.raises(malformed_exceptions):
+        setstate((((3, -1, None, None, None, 0, 1, None),), False, ''))
+
+    # DefaultDict metadata as a list where a 2-tuple is expected previously caused a raw tuple-item
+    # read to segfault; it is now coerced to a tuple and used safely.
+    restored = setstate(
+        (
+            (
+                (1, 0, None, None, None, 1, 1, None),
+                (1, 0, None, None, None, 1, 1, None),
+                (8, 2, [int, ['a', 'b']], None, None, 2, 3, {'a': None, 'b': None}),
+            ),
+            False,
+            '',
+        ),
+    )
+    assert optree.tree_unflatten(restored, [10, 20]) == defaultdict(int, {'a': 10, 'b': 20})
+
+    # DefaultDict metadata with the wrong tuple size is rejected.
+    with pytest.raises(malformed_exceptions):
+        setstate(
+            (
+                (
+                    (1, 0, None, None, None, 1, 1, None),
+                    (1, 0, None, None, None, 1, 1, None),
+                    (8, 2, (int, ['a', 'b'], 'extra'), None, None, 2, 3, {'a': None, 'b': None}),
+                ),
+                False,
+                '',
+            ),
+        )
+
+    # Dict key list shorter than arity (MakeNode would index past the list end).
+    with pytest.raises(malformed_exceptions):
+        setstate(
+            (
+                (
+                    (1, 0, None, None, None, 1, 1, None),
+                    (1, 0, None, None, None, 1, 1, None),
+                    (5, 2, ['a'], None, None, 2, 3, {'a': None, 'b': None}),
+                ),
+                False,
+                '',
+            ),
+        )
+
+    # Inconsistent intermediate num_nodes (previously only the last node was checked).
+    with pytest.raises(malformed_exceptions):
+        setstate(
+            (
+                (
+                    (1, 0, None, None, None, 1, 5, None),  # leaf claims num_nodes == 5
+                    (1, 0, None, None, None, 1, 1, None),
+                    (3, 2, None, None, None, 2, 3, None),
+                ),
+                False,
+                '',
+            ),
+        )
+
+
 @parametrize(
     tree=TREES,
     none_is_leaf=[False, True],

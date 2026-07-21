@@ -22,6 +22,8 @@ limitations under the License.
 #include <string>         // std::string
 #include <thread>         // std::this_thread::get_id
 #include <unordered_set>  // std::unordered_set
+#include <utility>        // std::pair
+#include <vector>         // std::vector
 
 #include "optree/optree.h"
 #include "optree/pytypes.h"
@@ -370,6 +372,10 @@ py::object PyTreeSpec::ToPickleable() const {
             case PyTreeKind::Dict:
             case PyTreeKind::OrderedDict: {
                 node.node_data = thread_safe_cast<py::list>(t[2]);
+                if (ListGetSize(node.node_data) != node.arity) [[unlikely]] {
+                    throw std::runtime_error(
+                        "Number of keys does not match arity in pickled PyTreeSpec.");
+                }
                 break;
             }
 
@@ -379,7 +385,23 @@ py::object PyTreeSpec::ToPickleable() const {
                 break;
             }
 
-            case PyTreeKind::DefaultDict:
+            case PyTreeKind::DefaultDict: {
+                // A default dict stores its metadata as a 2-tuple `(default_factory, sorted_keys)`.
+                // `MakeNode` reads it with raw tuple/list accessors, so validate the shape here to
+                // avoid type-confusion on malformed input.
+                const auto metadata = thread_safe_cast<py::tuple>(t[2]);
+                if (metadata.size() != 2) [[unlikely]] {
+                    throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                }
+                if (ListGetSize(thread_safe_cast<py::list>(metadata[1])) != node.arity)
+                    [[unlikely]] {
+                    throw std::runtime_error(
+                        "Number of keys does not match arity in pickled PyTreeSpec.");
+                }
+                node.node_data = metadata;
+                break;
+            }
+
             case PyTreeKind::Deque:
             case PyTreeKind::Custom: {
                 node.node_data = t[2];
@@ -430,6 +452,41 @@ py::object PyTreeSpec::ToPickleable() const {
 
         node.num_leaves = thread_safe_cast<ssize_t>(t[5]);
         node.num_nodes = thread_safe_cast<ssize_t>(t[6]);
+    }
+    // Validate that the reconstructed traversal is structurally consistent.
+    // `PYTREESPEC_SANITY_CHECK` only checks the final node, so a malformed pickle could otherwise
+    // smuggle in inconsistent arity / num_nodes / num_leaves that cause out-of-bounds access when
+    // the spec is later used. Walk the post-order traversal, folding each node's children off a
+    // stack of subtree sizes.
+    {
+        auto subtree_sizes = std::vector<std::pair<ssize_t, ssize_t>>{};  // (num_nodes, num_leaves)
+        subtree_sizes.reserve(out->m_traversal.size());
+        for (const Node &node : out->m_traversal) {
+            if (node.arity < 0 || node.num_leaves < 0 || node.num_nodes < 1) [[unlikely]] {
+                throw std::runtime_error("Malformed pickled PyTreeSpec.");
+            }
+            if (static_cast<ssize_t>(subtree_sizes.size()) < node.arity) [[unlikely]] {
+                throw std::runtime_error("Malformed pickled PyTreeSpec.");
+            }
+            ssize_t children_num_nodes = 0;
+            ssize_t children_num_leaves = 0;
+            for (ssize_t i = 0; i < node.arity; ++i) {
+                children_num_nodes += subtree_sizes.back().first;
+                children_num_leaves += subtree_sizes.back().second;
+                subtree_sizes.pop_back();
+            }
+            const ssize_t expected_num_nodes = children_num_nodes + 1;
+            const ssize_t expected_num_leaves =
+                (node.kind == PyTreeKind::Leaf ? ssize_t{1} : children_num_leaves);
+            if (node.num_nodes != expected_num_nodes || node.num_leaves != expected_num_leaves)
+                [[unlikely]] {
+                throw std::runtime_error("Malformed pickled PyTreeSpec.");
+            }
+            subtree_sizes.emplace_back(node.num_nodes, node.num_leaves);
+        }
+        if (subtree_sizes.size() != 1) [[unlikely]] {
+            throw std::runtime_error("Malformed pickled PyTreeSpec.");
+        }
     }
     out->m_traversal.shrink_to_fit();
     PYTREESPEC_SANITY_CHECK(*out);
