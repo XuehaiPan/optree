@@ -17,6 +17,7 @@
 
 import contextlib
 import itertools
+import math
 import os
 import pickle
 import platform
@@ -994,6 +995,35 @@ def test_treespec_broadcast_to_common_suffix_does_not_mutate_argument_on_key_mis
     assert hash(other) == before_hash
     # And it must still unflatten in its ORIGINAL insertion order (c, b), not a sorted (b, c) order.
     assert other.unflatten([10, 20]) == OrderedDict([('c', 10), ('b', 20)])
+
+
+def test_treespec_deep_walk_raises_recursion_error_not_segfault():
+    # Regression: `PathsImpl`, `AccessorsImpl`, and `BroadcastToCommonSuffixImpl` recurse once per
+    # tree level. Without a depth guard, a deeply-nested spec -- trivially built via doubling
+    # `compose` -- overflowed the native C++ stack and crashed the interpreter with a SIGSEGV instead
+    # of raising a catchable `RecursionError`.
+    # Each `compose` doubles the depth, so ceil(log2(limit)) + 1 composes push it above the limit.
+    num_composes = math.ceil(math.log2(optree.MAX_RECURSION_DEPTH)) + 1
+    deep = optree.tree_structure([0])
+    for _ in range(num_composes):
+        deep = deep.compose(deep)
+    assert 2**num_composes > optree.MAX_RECURSION_DEPTH
+    with pytest.raises(RecursionError):
+        deep.paths()
+    with pytest.raises(RecursionError):
+        deep.accessors()
+    with pytest.raises(RecursionError):
+        deep.broadcast_to_common_suffix(deep)
+
+    # Broadcasting the deep spec against a shallower spec whose depth is still below the limit
+    # recurses only as far as the common suffix, so it must succeed -- not raise RecursionError or
+    # crash -- in either direction, returning the deeper spec.
+    shallower = optree.tree_structure([0])
+    for _ in range(num_composes - 2):  # depth 2 ** (num_composes - 2), safely below the limit
+        shallower = shallower.compose(shallower)
+    assert 2 ** (num_composes - 2) < optree.MAX_RECURSION_DEPTH
+    assert deep.broadcast_to_common_suffix(shallower) == deep
+    assert shallower.broadcast_to_common_suffix(deep) == deep
 
 
 def test_treespec_compose_rejects_namespace_override_with_different_arity():

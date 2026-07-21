@@ -364,7 +364,8 @@ private:
         const std::vector<Node> &traversal,
         const ssize_t &pos,
         const std::vector<Node> &other_traversal,
-        const ssize_t &other_pos);
+        const ssize_t &other_pos,
+        const ssize_t &depth);
 
     // Return the type of the first custom node that resolves to a different registration under
     // `target_namespace` than it currently holds, or a null object if all custom nodes are

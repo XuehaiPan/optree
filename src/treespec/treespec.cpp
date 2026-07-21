@@ -208,7 +208,13 @@ std::optional<py::object> PyTreeSpec::FindReregisteredCustomType(
     const std::vector<Node> &traversal,
     const ssize_t &pos,
     const std::vector<Node> &other_traversal,
-    const ssize_t &other_pos) {
+    const ssize_t &other_pos,
+    const ssize_t &depth) {
+    if (depth > MAX_RECURSION_DEPTH) [[unlikely]] {
+        PyErr_SetString(PyExc_RecursionError,
+                        "Maximum recursion depth exceeded during broadcasting the treespecs.");
+        throw py::error_already_set();
+    }
     const Node &root = traversal.at(pos);
     const Node &other_root = other_traversal.at(other_pos);
     EXPECT_GE(pos + 1,
@@ -334,7 +340,12 @@ std::optional<py::object> PyTreeSpec::FindReregisteredCustomType(
                 other_cur = other_curs[py::cast<ssize_t>(DictGetItem(dict, key))];
                 const auto [num_nodes, other_num_nodes, new_num_nodes, new_num_leaves] =
                     // NOLINTNEXTLINE[misc-no-recursion]
-                    BroadcastToCommonSuffixImpl(nodes, traversal, cur, other_traversal, other_cur);
+                    BroadcastToCommonSuffixImpl(nodes,
+                                                traversal,
+                                                cur,
+                                                other_traversal,
+                                                other_cur,
+                                                depth + 1);
                 cur -= num_nodes;
                 nodes[start_num_nodes].num_nodes += new_num_nodes;
                 nodes[start_num_nodes].num_leaves += new_num_leaves;
@@ -413,7 +424,12 @@ std::optional<py::object> PyTreeSpec::FindReregisteredCustomType(
     for (ssize_t i = root.arity - 1; i >= 0; --i) {
         const auto [num_nodes, other_num_nodes, new_num_nodes, new_num_leaves] =
             // NOLINTNEXTLINE[misc-no-recursion]
-            BroadcastToCommonSuffixImpl(nodes, traversal, cur, other_traversal, other_cur);
+            BroadcastToCommonSuffixImpl(nodes,
+                                        traversal,
+                                        cur,
+                                        other_traversal,
+                                        other_cur,
+                                        depth + 1);
         cur -= num_nodes;
         other_cur -= other_num_nodes;
         nodes[start_num_nodes].num_nodes += new_num_nodes;
@@ -483,7 +499,8 @@ std::unique_ptr<PyTreeSpec> PyTreeSpec::BroadcastToCommonSuffix(const PyTreeSpec
                                     m_traversal,
                                     num_nodes - 1,
                                     other.m_traversal,
-                                    other_num_nodes - 1);
+                                    other_num_nodes - 1,
+                                    0);
     std::reverse(treespec->m_traversal.begin(), treespec->m_traversal.end());
     EXPECT_EQ(num_nodes_walked,
               num_nodes,
@@ -728,6 +745,11 @@ ssize_t PyTreeSpec::PathsImpl(PathVector &paths,  // NOLINT[misc-no-recursion]
                               const ssize_t &depth) const {
     const Node &root = m_traversal.at(pos);
     EXPECT_GE(pos + 1, root.num_nodes, "PyTreeSpec::Paths() walked off start of array.");
+    if (depth > MAX_RECURSION_DEPTH) [[unlikely]] {
+        PyErr_SetString(PyExc_RecursionError,
+                        "Maximum recursion depth exceeded during walking the tree.");
+        throw py::error_already_set();
+    }
 
     ssize_t cur = pos - 1;
     // NOLINTNEXTLINE[misc-no-recursion]
@@ -826,6 +848,11 @@ ssize_t PyTreeSpec::AccessorsImpl(Span &accessors,  // NOLINT[misc-no-recursion]
 
     const Node &root = m_traversal.at(pos);
     EXPECT_GE(pos + 1, root.num_nodes, "PyTreeSpec::TypedPaths() walked off start of array.");
+    if (depth > MAX_RECURSION_DEPTH) [[unlikely]] {
+        PyErr_SetString(PyExc_RecursionError,
+                        "Maximum recursion depth exceeded during walking the tree.");
+        throw py::error_already_set();
+    }
 
     ssize_t cur = pos - 1;
     const py::object node_type = GetType(root);
