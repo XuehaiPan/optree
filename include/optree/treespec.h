@@ -431,7 +431,7 @@ public:
 private:
     py::object m_root;
     std::vector<std::pair<py::object, ssize_t>> m_agenda;
-    const std::optional<py::function> m_leaf_predicate;
+    std::optional<py::function> m_leaf_predicate;
     const bool m_none_is_leaf;
     const std::string m_namespace;
     const bool m_is_dict_insertion_ordered;

@@ -377,6 +377,24 @@ def test_treeiter_self_referential():
         assert wr() is None
 
 
+def test_treeiter_leaf_predicate_no_reference_leak():
+    # A reference cycle that runs through the `leaf_predicate` callback must be collectable.
+    # Regression: `PyTreeIter` tp_traverse / tp_clear previously ignored `m_leaf_predicate`, so a
+    # cycle through the predicate was invisible to the cyclic garbage collector and leaked.
+    def is_leaf(x):
+        return False
+
+    it = optree.tree_iter({'a': 1, 'b': {'c': 2}}, is_leaf)
+    wr = weakref.ref(it)
+    assert next(it) == 1
+    is_leaf.self_ref = it  # cycle: it -> m_leaf_predicate (is_leaf) -> is_leaf.self_ref -> it
+
+    del it, is_leaf
+    gc_collect()
+    if not PYPY:
+        assert wr() is None
+
+
 def test_treespec_with_namespace():
     tree = NAMESPACED_TREE
 

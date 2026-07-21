@@ -74,6 +74,11 @@ namespace optree {
         Py_VISIT(obj.ptr());
     }
     Py_VISIT(self.m_root.ptr());
+    if (self.m_leaf_predicate) {
+        // The leaf predicate is an owned Python callback; it must be visited so the cyclic GC can
+        // see reference cycles that pass through it (otherwise such cycles leak).
+        Py_VISIT(self.m_leaf_predicate->ptr());
+    }
     return 0;
 }
 
@@ -88,6 +93,10 @@ namespace optree {
     }
     self.m_agenda.clear();
     Py_CLEAR(self.m_root.ptr());
+    if (self.m_leaf_predicate) {
+        // Drop the owned leaf predicate reference to break cycles that pass through it.
+        Py_CLEAR(self.m_leaf_predicate->ptr());
+    }
     return 0;
 }
 
