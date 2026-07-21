@@ -1945,6 +1945,30 @@ def test_treespec_constructor_namespace():
     assert treespec1 == treespec2
 
 
+def test_treespec_dict_constructor_preserves_insertion_ordered_namespace():
+    # Regression: under `dict_insertion_ordered` mode the key order of a dict spec depends on the
+    # namespace, so `treespec_dict(..., namespace=...)` must keep that namespace (like `tree_flatten`)
+    # instead of resetting it to '' -- an empty-namespace spec with unsorted keys is otherwise
+    # unreachable via `tree_flatten` and breaks equality/consistency.
+    leaf = optree.tree_structure(0)
+
+    with optree.dict_insertion_ordered(True, namespace='namespace'):
+        constructed = optree.treespec_dict({'b': leaf, 'a': leaf}, namespace='namespace')
+        _, flattened = optree.tree_flatten({'b': 1, 'a': 2}, namespace='namespace')
+
+    assert constructed.entries() == ['b', 'a']  # insertion order preserved
+    assert flattened.namespace == 'namespace'
+    assert constructed.namespace == 'namespace'  # was '' before the fix
+    assert constructed == flattened
+
+    # Without the mode, keys are sorted and the namespace is dropped -- same as `tree_flatten`.
+    outside = optree.treespec_dict({'b': leaf, 'a': leaf}, namespace='namespace')
+    _, flattened_outside = optree.tree_flatten({'b': 1, 'a': 2}, namespace='namespace')
+    assert outside.entries() == ['a', 'b']
+    assert outside.namespace == ''
+    assert outside == flattened_outside
+
+
 def test_treespec_constructor_none_treespec_inputs():
     with pytest.raises(ValueError, match=r'Expected a\(n\) list of PyTreeSpec\(s\), got .*\.'):
         optree.treespec_list([optree.treespec_leaf(), 1])

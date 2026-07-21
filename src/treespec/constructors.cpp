@@ -72,9 +72,16 @@ template <bool NoneIsLeaf>
     Node node;
     node.kind = PyTreeTypeRegistry::GetKind<NoneIsLeaf>(handle, node.custom, registry_namespace);
 
-    const auto verify_children = [&handle, &node, &registry_namespace](
-                                     const std::vector<py::object> &children,
-                                     std::vector<PyTreeSpec> &treespecs) -> void {
+    const auto dict_order_flags =
+        PyTreeTypeRegistry::GetDictInsertionOrderedFlags(registry_namespace);
+    const bool is_dict_insertion_ordered = dict_order_flags.with_inherited_global_namespace;
+    const bool is_dict_insertion_ordered_in_current_namespace =
+        dict_order_flags.in_current_namespace;
+
+    const auto verify_children =
+        [&handle, &node, &registry_namespace, &is_dict_insertion_ordered_in_current_namespace](
+            const std::vector<py::object> &children,
+            std::vector<PyTreeSpec> &treespecs) -> void {
         for (const py::object &child : children) {
             if (!py::isinstance<PyTreeSpec>(child)) [[unlikely]] {
                 std::ostringstream oss{};
@@ -114,7 +121,13 @@ template <bool NoneIsLeaf>
                     << ", got " << PyRepr(common_registry_namespace) << ".";
                 throw py::value_error(oss.str());
             }
-        } else if (node.kind != PyTreeKind::Custom) [[likely]] {
+        } else if (node.kind != PyTreeKind::Custom &&
+                   !((node.kind == PyTreeKind::Dict || node.kind == PyTreeKind::DefaultDict) &&
+                     is_dict_insertion_ordered_in_current_namespace)) [[likely]] {
+            // Drop the namespace for namespace-independent nodes. A Dict/DefaultDict whose keys are
+            // kept in insertion order does depend on the namespace (see the sort at the Dict case),
+            // so keep it there, mirroring `Flatten`
+            // (`is_dict_insertion_ordered_in_current_namespace`).
             registry_namespace = "";
         }
     };
@@ -170,8 +183,7 @@ template <bool NoneIsLeaf>
                 keys = DictKeys(dict);
                 if (node.kind != PyTreeKind::OrderedDict) [[likely]] {
                     node.original_keys = DictFromKeys(dict);
-                    if (!PyTreeTypeRegistry::IsDictInsertionOrdered(registry_namespace))
-                        [[likely]] {
+                    if (!is_dict_insertion_ordered) [[likely]] {
                         TotalOrderSort(keys);
                     }
                 }
