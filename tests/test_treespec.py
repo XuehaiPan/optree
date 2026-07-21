@@ -977,6 +977,25 @@ def test_treespec_compose_allows_compatible_namespace_merge():
         optree.unregister_pytree_node(GlobalOnly, namespace=GLOBAL_NAMESPACE)
 
 
+def test_treespec_broadcast_to_common_suffix_does_not_mutate_argument_on_key_mismatch():
+    # Regression: BroadcastToCommonSuffixImpl built the "got key(s)" part of its key-mismatch error
+    # message by sorting the ARGUMENT spec's live dict-node key list IN PLACE -- `other_keys` was a
+    # borrow of `node_data`, not a copy. For an OrderedDict the child subtrees stay in insertion
+    # order while the keys get permuted, silently corrupting a spec the caller still holds: repr,
+    # equality, hash, and unflatten all go wrong. The message must be built from a sorted COPY.
+    other = optree.tree_structure(OrderedDict([('c', 1), ('b', 2)]))
+    before_repr = str(other)
+    before_hash = hash(other)
+    this = optree.tree_structure({'a': 1})
+    with pytest.raises(ValueError, match='dictionary key mismatch'):
+        this.broadcast_to_common_suffix(other)
+    # The argument spec must be byte-for-byte unchanged by the failed call.
+    assert str(other) == before_repr
+    assert hash(other) == before_hash
+    # And it must still unflatten in its ORIGINAL insertion order (c, b), not a sorted (b, c) order.
+    assert other.unflatten([10, 20]) == OrderedDict([('c', 10), ('b', 20)])
+
+
 def test_treespec_compose_rejects_namespace_override_with_different_arity():
     # A type registered globally flattens both members as children (arity 2); a namespace override
     # flattens one member as a child and stores the other as node metadata (arity 1). Both

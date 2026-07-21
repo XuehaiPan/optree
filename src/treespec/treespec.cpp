@@ -292,15 +292,19 @@ std::optional<py::object> PyTreeSpec::FindReregisteredCustomType(
             const auto expected_keys = (root.kind != PyTreeKind::DefaultDict
                                             ? py::reinterpret_borrow<py::list>(root.node_data)
                                             : TupleGetItemAs<py::list>(root.node_data, 1));
-            auto other_keys = (other_root.kind != PyTreeKind::DefaultDict
-                                   ? py::reinterpret_borrow<py::list>(other_root.node_data)
-                                   : TupleGetItemAs<py::list>(other_root.node_data, 1));
+            const auto other_keys = (other_root.kind != PyTreeKind::DefaultDict
+                                         ? py::reinterpret_borrow<py::list>(other_root.node_data)
+                                         : TupleGetItemAs<py::list>(other_root.node_data, 1));
             const py::dict dict{};
             for (ssize_t i = 0; i < other_root.arity; ++i) {
                 DictSetItem(dict, ListGetItem(other_keys, i), py::int_(i));
             }
             if (!DictKeysEqual(expected_keys, dict)) [[unlikely]] {
-                TotalOrderSort(other_keys);
+                // Build the message from a sorted COPY of the keys. `other_keys` is a borrow of the
+                // argument spec's live `node_data`; sorting it in place would permute the keys
+                // while the child subtrees stay put, silently corrupting a spec the caller still
+                // holds.
+                const py::list sorted_other_keys = SortedDictKeys(dict);
                 const auto [missing_keys, extra_keys] = DictKeysDifference(expected_keys, dict);
                 std::ostringstream key_difference_sstream{};
                 if (ListGetSize(missing_keys) != 0) [[likely]] {
@@ -311,7 +315,7 @@ std::optional<py::object> PyTreeSpec::FindReregisteredCustomType(
                 }
                 std::ostringstream oss{};
                 oss << "dictionary key mismatch; expected key(s): " << PyRepr(expected_keys)
-                    << ", got key(s): " << PyRepr(other_keys) << key_difference_sstream.str()
+                    << ", got key(s): " << PyRepr(sorted_other_keys) << key_difference_sstream.str()
                     << ".";
                 throw py::value_error(oss.str());
             }
