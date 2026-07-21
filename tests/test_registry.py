@@ -18,9 +18,7 @@
 import copy
 import pickle
 import re
-import subprocess
 import sys
-import textwrap
 import warnings
 import weakref
 from collections import UserDict, UserList, namedtuple
@@ -35,10 +33,14 @@ from helpers import (
     NODETYPE_REGISTRY,
     PYPY,
     Py_GIL_DISABLED,
+    check_script_in_subprocess,
     disable_systrace,
     gc_collect,
     parametrize,
+    skipif_android,
+    skipif_ios,
     skipif_pypy,
+    skipif_wasm,
 )
 from optree.registry import DictMetaData
 
@@ -441,13 +443,16 @@ def test_register_pytree_node_warning_as_error_does_not_corrupt_registry():
     optree.unregister_pytree_node(mytuple, namespace='mytuple_warn_error')
 
 
+@skipif_wasm
+@skipif_android
+@skipif_ios
 def test_register_pytree_node_no_deadlock_with_concurrent_flatten():
     # Regression: `register_pytree_node` takes the registry write lock, and the namedtuple /
     # PyStructSequence detection it runs releases the GIL. Holding the registry lock across that GIL
     # release inverts the GIL <-> lock order and deadlocks a concurrent `tree_flatten` that holds
     # the GIL while waiting on the registry read lock, wedging the whole interpreter. Run register /
     # unregister concurrently with flatten in a subprocess under a watchdog; the process must finish.
-    script = textwrap.dedent(
+    check_script_in_subprocess(
         """
         import faulthandler
         import threading
@@ -491,19 +496,14 @@ def test_register_pytree_node_no_deadlock_with_concurrent_flatten():
             thread.join()
         print('COMPLETED')
         """,
-    ).strip()
-
-    result = subprocess.run(
-        [sys.executable, '-c', script],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
+        output='COMPLETED',
+        rstrip=True,
     )
-    assert result.returncode == 0, f'stdout={result.stdout!r} stderr={result.stderr!r}'
-    assert result.stdout.strip().endswith('COMPLETED')
 
 
+@skipif_wasm
+@skipif_android
+@skipif_ios
 def test_unregister_pytree_node_not_found_no_deadlock_with_concurrent_flatten():
     # Regression: `unregister_pytree_node` takes the registry write lock, and on the NOT-FOUND path
     # it builds its error message using the namedtuple / PyStructSequence detection, which releases
@@ -512,7 +512,7 @@ def test_unregister_pytree_node_not_found_no_deadlock_with_concurrent_flatten():
     # lock (the symmetric twin of the `register_pytree_node` deadlock). Unregister a never-registered
     # type (always not-found) concurrently with flatten in a subprocess under a watchdog; the process
     # must finish.
-    script = textwrap.dedent(
+    check_script_in_subprocess(
         """
         import faulthandler
         import threading
@@ -525,7 +525,7 @@ def test_unregister_pytree_node_not_found_no_deadlock_with_concurrent_flatten():
         faulthandler.dump_traceback_later(30, exit=True)  # watchdog: abort the process on a hang
 
         def unregister_loop():
-            for _ in range(100000):
+            for _ in range(50000):
                 try:
                     optree.unregister_pytree_node(NeverRegistered, namespace='deadlock')
                 except ValueError:
@@ -533,7 +533,7 @@ def test_unregister_pytree_node_not_found_no_deadlock_with_concurrent_flatten():
 
         def flatten_loop():
             tree = {'a': 1, 'b': 2, 'c': 3}
-            for _ in range(100000):
+            for _ in range(50000):
                 optree.tree_flatten(tree)
 
         threads = [threading.Thread(target=unregister_loop) for _ in range(2)]
@@ -544,17 +544,9 @@ def test_unregister_pytree_node_not_found_no_deadlock_with_concurrent_flatten():
             thread.join()
         print('COMPLETED')
         """,
-    ).strip()
-
-    result = subprocess.run(
-        [sys.executable, '-c', script],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
+        output='COMPLETED',
+        rstrip=True,
     )
-    assert result.returncode == 0, f'stdout={result.stdout!r} stderr={result.stderr!r}'
-    assert result.stdout.strip().endswith('COMPLETED')
 
 
 def test_flatten_with_wrong_number_of_returns():

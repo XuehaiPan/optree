@@ -18,7 +18,6 @@
 import contextlib
 import itertools
 import math
-import os
 import pickle
 import platform
 import re
@@ -26,7 +25,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import textwrap
 import weakref
 from collections import OrderedDict, UserList, defaultdict, deque
 
@@ -585,50 +583,24 @@ def test_treespec_pickle_missing_registration():
     treespec = optree.tree_structure(Foo(0, 1), namespace='foo')
     serialized = pickle.dumps(treespec)
 
-    try:
-        output = subprocess.run(
-            [
-                sys.executable,
-                '-c',
-                textwrap.dedent(
-                    f"""
-                    import pickle
-                    import sys
+    check_script_in_subprocess(
+        f"""
+        import pickle
+        import sys
 
-                    sys.path.insert(0, {str(TEST_ROOT)!r})
+        sys.path.insert(0, {str(TEST_ROOT)!r})
 
-                    try:
-                        treespec = pickle.loads({serialized!r})
-                    except Exception as ex:
-                        print(ex)
-                    else:
-                        print('No exception was raised.', file=sys.stderr)
-                        sys.exit(1)
-                    """,
-                ).strip(),
-            ],
-            capture_output=True,
-            check=True,
-            text=True,
-            encoding='utf-8',
-            cwd=TEST_ROOT,
-            env={
-                key: value
-                for key, value in os.environ.items()
-                if (
-                    not key.startswith(('PYTHON', 'PYTEST', 'COV_'))
-                    or key in ('PYTHON_GIL', 'PYTHONDEVMODE', 'PYTHONHASHSEED')
-                )
-            },
-            timeout=120.0,
-        )
-        message = output.stdout.strip()
-    except subprocess.CalledProcessError as ex:
-        raise RuntimeError(ex.stderr) from ex
-
-    assert re.match(
-        r"^Unknown custom type in pickled PyTreeSpec: <class '.*'> in namespace 'foo'\.$",
-        string=message,
+        try:
+            treespec = pickle.loads({serialized!r})
+        except Exception as ex:
+            print(ex)
+        else:
+            print('No exception was raised.', file=sys.stderr)
+            sys.exit(1)
+        """,
+        output=re.compile(
+            r"Unknown custom type in pickled PyTreeSpec: <class '.*'> in namespace 'foo'\.",
+        ),
     )
 
     optree.unregister_pytree_node(Foo, namespace='foo')
