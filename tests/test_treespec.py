@@ -133,6 +133,31 @@ def test_treespec_equal_hash():
             assert hash(treespec1_none_is_leaf) != hash(treespec2)
 
 
+def test_treespec_equal_hash_with_namespace():
+    # `optree.functools.partial` is registered in the global namespace, so it is recognized
+    # under any namespace. Flattening the same object with and without an explicit namespace
+    # yields structurally identical treespecs that compare equal, because an empty namespace is
+    # treated as a wildcard compatible with any namespace (see `PyTreeSpec::EqualTo`). Equal
+    # treespecs MUST hash equally, otherwise hash-based containers (`dict` / `set`) break.
+    obj = optree.functools.partial(int, base=2)
+
+    treespec_no_namespace = optree.tree_structure(obj)
+    treespec_namespace = optree.tree_structure(obj, namespace='namespace')
+
+    assert treespec_no_namespace.namespace == ''
+    assert treespec_namespace.namespace == 'namespace'
+
+    # The empty namespace is a wildcard compatible with any namespace: these compare equal.
+    assert treespec_no_namespace == treespec_namespace
+
+    # Hash/equality contract: equal objects must have equal hashes.
+    assert hash(treespec_no_namespace) == hash(treespec_namespace)
+
+    # Consequences for hash-based containers when the contract is honored.
+    assert treespec_namespace in {treespec_no_namespace: 'value'}
+    assert len({treespec_no_namespace, treespec_namespace}) == 1
+
+
 @parametrize(
     tree=TREES,
     none_is_leaf=[False, True],

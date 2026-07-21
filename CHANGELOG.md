@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Define `Py_GIL_DISABLED` for free-threaded debug builds on Windows when building the C extension to work around an upstream CMake `FindPython` bug by [@XuehaiPan](https://github.com/XuehaiPan) in [#285](https://github.com/metaopt/optree/pull/285).
+- Fix `PyTreeSpec.__hash__` mixing the namespace into the hash unconditionally while `__eq__` treats an empty namespace as a wildcard, which violated the hash/equality contract and broke `dict` / `set` lookups for otherwise-equal treespecs by [@XuehaiPan](https://github.com/XuehaiPan).
 
 ### Removed
 
