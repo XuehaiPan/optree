@@ -790,6 +790,39 @@ def test_treespec_compose_children(
             assert optree.treespec_is_suffix(expected_treespec, treespec, strict=False)
 
 
+def test_treespec_is_prefix_nested_dict_key_reorder():
+    # Regression: `IsPrefix` reorders a dict node's children in a working copy of the traversal to
+    # make key order irrelevant. When a NESTED dict also needed reordering, it indexed the pristine
+    # traversal by an offset into the already-mutated working copy, corrupting it -> a spurious
+    # `optree._C.InternalError` or a wrong boolean. Two treespecs that describe the SAME tree
+    # (differing only in dict key insertion order, at nested levels) must be mutual non-strict
+    # prefixes / suffixes.
+
+    # Top-level AND nested dict keys reordered; the top-level reorder relocates the nested dict.
+    tree_a = OrderedDict([('a', 0), ('b', OrderedDict([('e', 0), ('g', 0)])), ('d', 0)])
+    tree_b = OrderedDict([('b', OrderedDict([('g', 0), ('e', 0)])), ('a', 0), ('d', 0)])
+    a = optree.tree_structure(tree_a)
+    b = optree.tree_structure(tree_b)
+    assert optree.treespec_is_prefix(a, b, strict=False)
+    assert optree.treespec_is_prefix(b, a, strict=False)
+    assert optree.treespec_is_suffix(a, b, strict=False)
+    assert optree.treespec_is_suffix(b, a, strict=False)
+    assert a <= b
+    assert b <= a
+    assert a >= b
+    assert b >= a
+
+    # A nested dict whose reorder relocates a subtree containing another out-of-order dict.
+    tree_a2 = OrderedDict([('a', 0), ('d', 0), ('b', OrderedDict([('e', 0), ('f', 0)]))])
+    tree_b2 = OrderedDict([('b', OrderedDict([('f', 0), ('e', 0)])), ('d', 0), ('a', 0)])
+    a2 = optree.tree_structure(tree_a2)
+    b2 = optree.tree_structure(tree_b2)
+    assert optree.treespec_is_prefix(a2, b2, strict=False)
+    assert optree.treespec_is_prefix(b2, a2, strict=False)
+    assert a2 <= b2
+    assert b2 <= a2
+
+
 @parametrize(
     tree=TREES,
     none_is_leaf=[False, True],
