@@ -1051,82 +1051,78 @@ def test_treespec_transform_rejects_incompatible_namespace_merge():
     # custom node -- to a different registration, the transform must be rejected (same class as the
     # compose / broadcast merge rejection). A globally-only-registered type is still allowed via
     # fallback.
-    class TransformT:
-        def __init__(self, a, b):
-            self.a, self.b = a, b
+    class Diverge:  # variable arity; registered differently in the global and named namespaces
+        def __init__(self, *children):
+            self.children = children
 
-    class TransformS:
-        def __init__(self, x):
-            self.x = x
-
-    class TransformGlobal:
-        def __init__(self, a, b):
-            self.a, self.b = a, b
+    class GlobalOnly:  # variable arity; registered only globally -> resolves via fallback anywhere
+        def __init__(self, *children):
+            self.children = children
 
     optree.register_pytree_node(
-        TransformT,
-        lambda t: ((t.a, t.b), None, None),
-        lambda m, c: TransformT(c[0], c[1]),
+        Diverge,
+        lambda d: (d.children, None, None),
+        lambda metadata, children: Diverge(*children),
         namespace=GLOBAL_NAMESPACE,
     )
     optree.register_pytree_node(
-        TransformT,
-        lambda t: ((t.b, t.a), None, None),
-        lambda m, c: TransformT(c[1], c[0]),
+        Diverge,
+        lambda d: (tuple(reversed(d.children)), None, None),  # divergent from the global reg
+        lambda metadata, children: Diverge(*reversed(children)),
         namespace='transform_change',
     )
     optree.register_pytree_node(
-        TransformS,
-        lambda t: ((t.x,), None, None),
-        lambda m, c: TransformS(c[0]),
-        namespace='transform_change',
-    )
-    optree.register_pytree_node(
-        TransformGlobal,
-        lambda t: ((t.a, t.b), None, None),
-        lambda m, c: TransformGlobal(c[0], c[1]),
+        GlobalOnly,
+        lambda g: (g.children, None, None),
+        lambda metadata, children: GlobalOnly(*children),
         namespace=GLOBAL_NAMESPACE,
     )
 
     def to_namespaced_leaf(_):
-        return optree.tree_structure(TransformS(0), namespace='transform_change')
+        # Replace a leaf with a namespaced Diverge to inject the namespace (leaves have no arity).
+        return optree.tree_structure(Diverge(0), namespace='transform_change')
 
-    def to_namespaced_node(nodespec):
-        # Outer tuple -> globally-registered TransformT; inner lists -> 'transform_change' TransformS.
-        if nodespec.type is tuple:
-            return optree.tree_structure(TransformT(0, 0))
-        return to_namespaced_leaf(None)
+    def to_global_node(spec):
+        # Replace a node with a same-arity globally-resolved Diverge; it rebinds under the promoted
+        # namespace (Diverge is registered differently there). Generic over the node's arity.
+        return optree.tree_structure(Diverge(*range(spec.num_children)))
+
+    def to_namespaced_node(spec):
+        # Outer node -> global Diverge (rebinds); inner nodes -> namespaced Diverge (injects the
+        # namespace). Both same-arity, so `f_node` alone drives the (f_node, None) rejection.
+        if spec.type is tuple:
+            return to_global_node(spec)
+        return optree.tree_structure(
+            Diverge(*range(spec.num_children)),
+            namespace='transform_change',
+        )
 
     try:
         # The rejection must fire for every `(f_node, f_leaf)` combination that puts a
         # globally-resolved custom node under the non-empty unified namespace.
 
-        # (None, f_leaf): the input's global TransformT is kept, f_leaf injects the namespace.
-        outer = optree.tree_structure(TransformT(0, 0))
+        # (None, f_leaf): the input's global Diverge is kept, f_leaf injects the namespace.
+        outer = optree.tree_structure(Diverge(0, 0))
         assert outer.namespace == ''
         with pytest.raises(ValueError, match='different registration'):
             outer.transform(None, to_namespaced_leaf)
 
-        # (f_node, None): f_node alone yields a global TransformT above 'transform_change' children.
+        # (f_node, None): f_node alone yields a global Diverge above namespaced children.
         with pytest.raises(ValueError, match='different registration'):
             optree.tree_structure(([0], [0])).transform(to_namespaced_node, None)
 
-        # (f_node, f_leaf): f_node injects the global TransformT, f_leaf injects the namespace.
+        # (f_node, f_leaf): f_node injects the global Diverge, f_leaf injects the namespace.
         with pytest.raises(ValueError, match='different registration'):
-            optree.tree_structure([0, 0]).transform(
-                lambda _: optree.tree_structure(TransformT(0, 0)),
-                to_namespaced_leaf,
-            )
+            optree.tree_structure([0, 0]).transform(to_global_node, to_namespaced_leaf)
 
-        # Compatible: TransformGlobal resolves identically under any namespace via fallback.
-        global_outer = optree.tree_structure(TransformGlobal(0, 0))
+        # Compatible: GlobalOnly resolves identically under any namespace via fallback.
+        global_outer = optree.tree_structure(GlobalOnly(0, 0))
         transformed = global_outer.transform(None, to_namespaced_leaf)
         assert transformed.namespace == 'transform_change'
     finally:
-        optree.unregister_pytree_node(TransformT, namespace=GLOBAL_NAMESPACE)
-        optree.unregister_pytree_node(TransformT, namespace='transform_change')
-        optree.unregister_pytree_node(TransformS, namespace='transform_change')
-        optree.unregister_pytree_node(TransformGlobal, namespace=GLOBAL_NAMESPACE)
+        optree.unregister_pytree_node(Diverge, namespace=GLOBAL_NAMESPACE)
+        optree.unregister_pytree_node(Diverge, namespace='transform_change')
+        optree.unregister_pytree_node(GlobalOnly, namespace=GLOBAL_NAMESPACE)
 
 
 def test_treespec_from_collection_rejects_incompatible_namespace_promotion():
@@ -1135,59 +1131,138 @@ def test_treespec_from_collection_rejects_incompatible_namespace_promotion():
     # or a globally-resolved child) to a different registration, the result would claim the namespace
     # while carrying the wrong registration -- it must be rejected, exactly like compose / transform /
     # broadcast. A globally-only-registered type is still allowed via fallback.
-    class FromCollT:
-        def __init__(self, a, b):
-            self.a, self.b = a, b
+    class Diverge:  # variable arity; registered differently in the global and named namespaces
+        def __init__(self, *children):
+            self.children = children
 
-    class FromCollS:
-        def __init__(self, x):
-            self.x = x
-
-    class FromCollGlobal:
-        def __init__(self, a, b):
-            self.a, self.b = a, b
+    class GlobalOnly:  # variable arity; registered only globally -> resolves via fallback anywhere
+        def __init__(self, *children):
+            self.children = children
 
     optree.register_pytree_node(
-        FromCollT,
-        lambda t: ((t.a, t.b), None, None),
-        lambda m, c: FromCollT(c[0], c[1]),
+        Diverge,
+        lambda d: (d.children, None, None),
+        lambda metadata, children: Diverge(*children),
         namespace=GLOBAL_NAMESPACE,
     )
     optree.register_pytree_node(
-        FromCollT,
-        lambda t: ((t.b, t.a), None, None),
-        lambda m, c: FromCollT(c[1], c[0]),
+        Diverge,
+        lambda d: (tuple(reversed(d.children)), None, None),  # divergent from the global reg
+        lambda metadata, children: Diverge(*reversed(children)),
         namespace='from_coll_change',
     )
     optree.register_pytree_node(
-        FromCollS,
-        lambda t: ((t.x,), None, None),
-        lambda m, c: FromCollS(c[0]),
-        namespace='from_coll_change',
-    )
-    optree.register_pytree_node(
-        FromCollGlobal,
-        lambda t: ((t.a, t.b), None, None),
-        lambda m, c: FromCollGlobal(c[0], c[1]),
+        GlobalOnly,
+        lambda g: (g.children, None, None),
+        lambda metadata, children: GlobalOnly(*children),
         namespace=GLOBAL_NAMESPACE,
     )
     try:
-        # Incompatible: the globally-resolved FromCollT rebinds under the promoted namespace.
-        foo = optree.tree_structure(FromCollT(0, 0))
-        child = optree.tree_structure(FromCollS(0), namespace='from_coll_change')
+        # Incompatible: the globally-resolved Diverge rebinds under the promoted namespace.
+        foo = optree.tree_structure(Diverge(0, 0))
+        child = optree.tree_structure(Diverge(0), namespace='from_coll_change')
         assert foo.namespace == ''
         with pytest.raises(ValueError, match='different registration'):
             optree.treespec_from_collection([foo, child], namespace='')
 
-        # Compatible: FromCollGlobal resolves identically under any namespace via fallback.
-        global_spec = optree.tree_structure(FromCollGlobal(0, 0))
+        # Compatible: GlobalOnly resolves identically under any namespace via fallback.
+        global_spec = optree.tree_structure(GlobalOnly(0, 0))
         promoted = optree.treespec_from_collection([global_spec, child], namespace='')
         assert promoted.namespace == 'from_coll_change'
     finally:
-        optree.unregister_pytree_node(FromCollT, namespace=GLOBAL_NAMESPACE)
-        optree.unregister_pytree_node(FromCollT, namespace='from_coll_change')
-        optree.unregister_pytree_node(FromCollS, namespace='from_coll_change')
-        optree.unregister_pytree_node(FromCollGlobal, namespace=GLOBAL_NAMESPACE)
+        optree.unregister_pytree_node(Diverge, namespace=GLOBAL_NAMESPACE)
+        optree.unregister_pytree_node(Diverge, namespace='from_coll_change')
+        optree.unregister_pytree_node(GlobalOnly, namespace=GLOBAL_NAMESPACE)
+
+
+def test_treespec_dict_key_order_survives_namespace_promotion():
+    # A dict node's key order is fixed at BUILD time by the namespace passed then. Operations that
+    # merge/promote a spec's namespace -- `treespec_from_collection`, `compose`, `transform` -- only
+    # re-tag it for custom-node resolution; like `compose` they NEVER reorder an already-built dict.
+    # So a dict built under the global ('') namespace (sorted keys) keeps that order even after
+    # promotion to an insertion-ordered namespace, intentionally differing from the same dict built
+    # directly under that namespace, while a dict built directly under the namespace keeps its
+    # insertion order (matching). This test locks that behavior across all three operations.
+    class Wrap:  # a variable-arity custom node, so `f_node` can build same-arity replacements
+        def __init__(self, *children):
+            self.children = children
+
+    optree.register_pytree_node(
+        Wrap,
+        lambda w: (w.children, None, None),
+        lambda metadata, children: Wrap(*children),
+        namespace='promote_order',
+    )
+    try:
+        with optree.dict_insertion_ordered(True, namespace='promote_order'):
+            child = optree.tree_structure(Wrap(0), namespace='promote_order')
+            # Built directly under the insertion-ordered namespace: keys in insertion order (b, a).
+            genuine = optree.tree_structure({'b': Wrap(0), 'a': Wrap(0)}, namespace='promote_order')
+            assert genuine.entries() == ['b', 'a']
+
+            def to_namespaced_node(spec):
+                # Rewrite every non-dict node into a same-arity `Wrap` in the namespace -- generic
+                # over the node's arity rather than tied to this test's shapes -- so `f_node` alone
+                # can promote the spec. `transform` promotes only when some output carries a
+                # namespace, and only a custom node can. The outer dict node is kept so its key
+                # order stays observable.
+                if spec.type is dict:
+                    return spec
+                return optree.tree_structure(
+                    Wrap(*range(spec.num_children)),
+                    namespace='promote_order',
+                )
+
+            def transform_combos(outer):
+                return {
+                    'transform(None, f_leaf)': outer.transform(None, lambda _: child),
+                    'transform(f_node, None)': outer.transform(to_namespaced_node, None),
+                    'transform(f_node, f_leaf)': outer.transform(
+                        to_namespaced_node,
+                        lambda _: child,
+                    ),
+                }
+
+            # Dicts built under the GLOBAL ('') namespace -- sorted keys (a, b) -- then promoted.
+            from_global = {
+                'from_collection': optree.treespec_from_collection(
+                    {'b': child, 'a': child},
+                    namespace='',
+                ),
+                'compose': optree.tree_structure({'b': 0, 'a': 0}).compose(child),
+                **transform_combos(optree.tree_structure({'b': [0], 'a': [0]})),
+            }
+            # Dicts built directly under the namespace -- insertion-order keys (b, a).
+            from_namespace = {
+                'from_collection': optree.treespec_from_collection(
+                    {'b': child, 'a': child},
+                    namespace='promote_order',
+                ),
+                'compose': optree.tree_structure(
+                    {'b': 0, 'a': 0},
+                    namespace='promote_order',
+                ).compose(child),
+                **transform_combos(
+                    optree.tree_structure({'b': [0], 'a': [0]}, namespace='promote_order'),
+                ),
+            }
+
+        for name, spec in from_global.items():
+            assert spec.namespace == 'promote_order', name  # promoted for custom resolution ...
+            assert spec.entries() == ['a', 'b'], name  # ... but the dict keeps '' (sorted) order
+
+        for name, spec in from_namespace.items():
+            assert spec.namespace == 'promote_order', name
+            assert spec.entries() == ['b', 'a'], name  # insertion order kept, matches direct build
+
+        # from_collection / compose reproduce genuine's flat structure exactly, so the only
+        # difference is the dict key order: global-built differs, namespace-built matches.
+        assert from_global['from_collection'] != genuine
+        assert from_global['compose'] != genuine
+        assert from_namespace['from_collection'] == genuine
+        assert from_namespace['compose'] == genuine
+    finally:
+        optree.unregister_pytree_node(Wrap, namespace='promote_order')
 
 
 def test_treespec_is_prefix_nested_dict_key_reorder():
