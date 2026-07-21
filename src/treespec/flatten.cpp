@@ -204,17 +204,15 @@ bool PyTreeSpec::FlattenInto(const py::handle &handle,
                              const bool &none_is_leaf,
                              const std::string &registry_namespace) {
     bool found_custom = false;
-    bool is_dict_insertion_ordered = false;
-    bool is_dict_insertion_ordered_in_current_namespace = false;
-    {
-#if defined(OPTREE_HAS_READ_WRITE_LOCK)
-        const scoped_read_lock lock{PyTreeTypeRegistry::sm_dict_order_mutex};
-#endif
-        is_dict_insertion_ordered = PyTreeTypeRegistry::IsDictInsertionOrdered(registry_namespace);
-        is_dict_insertion_ordered_in_current_namespace =
-            PyTreeTypeRegistry::IsDictInsertionOrdered(registry_namespace,
-                                                       /*inherit_global_namespace=*/false);
-    }
+    // Snapshot both dict-insertion-order flags under a single lock. Do NOT read-lock
+    // `sm_dict_order_mutex` here and then call `IsDictInsertionOrdered` (which read-locks it
+    // again): `std::shared_mutex` is not recursive, so a nested shared acquisition is undefined
+    // behavior and deadlocks under writer-preference on free-threaded builds.
+    const auto dict_order_flags =
+        PyTreeTypeRegistry::GetDictInsertionOrderedFlags(registry_namespace);
+    const bool is_dict_insertion_ordered = dict_order_flags.with_inherited_global_namespace;
+    const bool is_dict_insertion_ordered_in_current_namespace =
+        dict_order_flags.in_current_namespace;
 
     if (none_is_leaf) [[unlikely]] {
         if (!is_dict_insertion_ordered) [[likely]] {
@@ -481,17 +479,15 @@ bool PyTreeSpec::FlattenIntoWithPath(const py::handle &handle,
                                      const bool &none_is_leaf,
                                      const std::string &registry_namespace) {
     bool found_custom = false;
-    bool is_dict_insertion_ordered = false;
-    bool is_dict_insertion_ordered_in_current_namespace = false;
-    {
-#if defined(OPTREE_HAS_READ_WRITE_LOCK)
-        const scoped_read_lock lock{PyTreeTypeRegistry::sm_dict_order_mutex};
-#endif
-        is_dict_insertion_ordered = PyTreeTypeRegistry::IsDictInsertionOrdered(registry_namespace);
-        is_dict_insertion_ordered_in_current_namespace =
-            PyTreeTypeRegistry::IsDictInsertionOrdered(registry_namespace,
-                                                       /*inherit_global_namespace=*/false);
-    }
+    // Snapshot both dict-insertion-order flags under a single lock. Do NOT read-lock
+    // `sm_dict_order_mutex` here and then call `IsDictInsertionOrdered` (which read-locks it
+    // again): `std::shared_mutex` is not recursive, so a nested shared acquisition is undefined
+    // behavior and deadlocks under writer-preference on free-threaded builds.
+    const auto dict_order_flags =
+        PyTreeTypeRegistry::GetDictInsertionOrderedFlags(registry_namespace);
+    const bool is_dict_insertion_ordered = dict_order_flags.with_inherited_global_namespace;
+    const bool is_dict_insertion_ordered_in_current_namespace =
+        dict_order_flags.in_current_namespace;
 
     auto stack = reserved_vector<py::handle>(4);
     if (none_is_leaf) [[unlikely]] {

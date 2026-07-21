@@ -173,6 +173,33 @@ public:
                (inherit_global_namespace && namespaces.find({interpid, ""}) != namespaces.end());
     }
 
+    // Whether dictionary key insertion order is preserved during flattening. Both flags are
+    // computed together under a single lock so callers see a consistent snapshot; this also avoids
+    // recursively read-locking `sm_dict_order_mutex` (which is not a recursive mutex) that would
+    // happen if a caller held the lock while calling `IsDictInsertionOrdered`.
+    struct DictInsertionOrderedFlags {
+        // Whether the given namespace itself preserves insertion order.
+        bool in_current_namespace;
+        // Whether the given namespace, or the inherited global namespace, preserves insertion
+        // order.
+        bool with_inherited_global_namespace;
+    };
+
+    [[nodiscard]] static inline Py_ALWAYS_INLINE DictInsertionOrderedFlags
+    GetDictInsertionOrderedFlags(const std::string &registry_namespace) {
+        const scoped_read_lock lock{sm_dict_order_mutex};
+
+        const auto interpid = GetCurrentPyInterpreterID();
+        const auto &namespaces = sm_dict_insertion_ordered_namespaces;
+        const bool in_current_namespace =
+            namespaces.find({interpid, registry_namespace}) != namespaces.end();
+        return {
+            .in_current_namespace = in_current_namespace,
+            .with_inherited_global_namespace =
+                in_current_namespace || namespaces.find({interpid, ""}) != namespaces.end(),
+        };
+    }
+
     // Set the namespace to preserve the insertion order of the dictionary keys during flattening.
     static inline Py_ALWAYS_INLINE void SetDictInsertionOrdered(
         const bool &mode,
