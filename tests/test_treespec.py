@@ -18,6 +18,7 @@
 import contextlib
 import itertools
 import math
+import os
 import pickle
 import platform
 import re
@@ -259,6 +260,26 @@ def test_treespec_string_representation(data):
         new_tree = optree.tree_unflatten(treespec, range(treespec.num_leaves))
         reconstructed_tree = eval(representation, helpers.__dict__.copy())
         assert new_tree == reconstructed_tree
+
+
+@skipif_pypy  # CPython-only: `os.stat_result` slots 7, 8, 9 are unnamed; PyPy names them
+def test_treespec_structseq_unnamed_field_string_representation():
+    # `os.stat_result` renders its UNNAMED sequence slots (7, 8, 9 -- the integer atime/mtime/ctime)
+    # in the treespec repr with the synthetic `<unnamed field>` placeholder, following CPython's
+    # `<lambda>`/`<genexpr>` convention for names that are not real identifiers (rather than the bare
+    # `unnamed field` marker, which reads as an invalid keyword). CPython's `stat_result_desc` has
+    # pinned the 7 named + 3 unnamed sequence fields (`n_in_sequence == 10`) for 16 years, so the full
+    # sequence repr is stable and asserted exactly; the hidden float `st_atime`/etc. fields (indices
+    # >= 10) are not part of the sequence and must not leak into the repr.
+    assert os.stat_result.n_sequence_fields == 10
+    assert os.stat_result.n_unnamed_fields == 3
+    st = os.stat_result(range(os.stat_result.n_fields))
+    representation = str(optree.tree_structure(st))
+    assert representation == (
+        'PyTreeSpec(os.stat_result('
+        'st_mode=*, st_ino=*, st_dev=*, st_nlink=*, st_uid=*, st_gid=*, st_size=*, '
+        '<unnamed field>=*, <unnamed field>=*, <unnamed field>=*))'
+    )
 
 
 def test_treespec_with_empty_tuple_string_representation():

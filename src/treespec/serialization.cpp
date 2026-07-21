@@ -222,7 +222,16 @@ std::string PyTreeSpec::ToStringImpl() const {
                     if (!first) [[likely]] {
                         sstream << ", ";
                     }
-                    sstream << PyStr(field) << "=" << *child_it;
+                    const std::string name = PyStr(field);
+                    // An unnamed slot has no valid identifier; render it with the synthetic
+                    // `<unnamed field>` placeholder (cf. CPython's `<lambda>`) rather than the bare
+                    // marker, which would read as an invalid keyword argument.
+                    if (name == PyStructSequence_UnnamedField) [[unlikely]] {
+                        sstream << "<" << name << ">";
+                    } else [[likely]] {
+                        sstream << name;
+                    }
+                    sstream << "=" << *child_it;
                     ++child_it;
                     first = false;
                 }
