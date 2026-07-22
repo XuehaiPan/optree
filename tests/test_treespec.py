@@ -26,6 +26,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import warnings
 import weakref
 from collections import OrderedDict, UserList, defaultdict, deque
 
@@ -1995,6 +1996,21 @@ def test_treespec_leaf_none(namespace):
             none_is_leaf=True,
             namespace=namespace,
         )
+
+
+def test_treespec_from_collection_on_leaf_propagates_escalated_warning():
+    # `treespec_from_collection()` on a leaf issues a UserWarning via `PyErr_WarnEx()`. When warnings
+    # are escalated to errors (e.g. `-W error`), the escalation must propagate cleanly as that
+    # UserWarning -- the C++ code must check `PyErr_WarnEx()`'s return value and raise, not ignore it
+    # and return a result with the exception left set (which pybind11 surfaces as a confusing
+    # `SystemError: ... returned a result with an exception set`).
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with pytest.raises(
+            UserWarning,
+            match=re.escape('PyTreeSpec::MakeFromCollection() is called on a leaf.'),
+        ):
+            optree.treespec_from_collection(1)
 
 
 @parametrize(
