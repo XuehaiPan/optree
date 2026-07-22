@@ -1004,6 +1004,40 @@ def test_treespec_broadcast_to_common_suffix_does_not_mutate_argument_on_key_mis
     assert other.unflatten([10, 20]) == OrderedDict([('c', 10), ('b', 20)])
 
 
+def test_treespec_broadcast_to_common_suffix_preserves_custom_node_entries():
+    # Regression: BroadcastToCommonSuffixImpl rebuilds each non-leaf node with a designated
+    # initializer that lists `.node_data` then jumps to `.custom`, silently skipping `.node_entries`
+    # (which is declared between them). C++ value-initializes the omitted member to a null handle, so
+    # a custom node registered with explicit path entries -- a 3-tuple flatten `(children, metadata,
+    # entries)` -- lost them in the broadcasted spec. `entries()`/`paths()`/`accessors()` then fell
+    # back to the `range(arity)` integer indices, producing not just different but BROKEN accessors
+    # (`GetAttrEntry(entry=0)` calls `getattr(obj, 0)`, a `TypeError`, instead of `getattr(obj, 'a')`).
+    class Vector:
+        def __init__(self, a, c):
+            self.a, self.c = a, c
+
+    optree.register_pytree_node(
+        Vector,
+        lambda o: ((o.a, o.c), None, ('a', 'c')),  # 3-tuple flatten -> node_entries = ('a', 'c')
+        lambda metadata, children: Vector(*children),
+        path_entry_type=optree.GetAttrEntry,
+        namespace=GLOBAL_NAMESPACE,
+    )
+    try:
+        spec = optree.tree_structure(Vector(1, 2))
+        other = optree.tree_structure(Vector(3, 4))
+        assert spec.entries() == ['a', 'c']
+
+        # Both specs share the same custom structure, so the common suffix is that structure and the
+        # explicit string entries must survive unchanged -- not degrade to the fallback [0, 1].
+        broadcasted = spec.broadcast_to_common_suffix(other)
+        assert broadcasted.entries() == ['a', 'c']
+        assert broadcasted.paths() == spec.paths()
+        assert broadcasted.accessors() == spec.accessors()
+    finally:
+        optree.unregister_pytree_node(Vector, namespace=GLOBAL_NAMESPACE)
+
+
 def test_treespec_deep_walk_raises_recursion_error_not_segfault():
     # Regression: `PathsImpl`, `AccessorsImpl`, and `BroadcastToCommonSuffixImpl` recurse once per
     # tree level. Without a depth guard, a deeply-nested spec -- trivially built via doubling

@@ -259,6 +259,7 @@ std::optional<py::object> PyTreeSpec::FindReregisteredCustomType(
         .kind = root.kind,
         .arity = root.arity,
         .node_data = root.node_data,
+        .node_entries = root.node_entries,
         .custom = root.custom,
         .num_leaves = 0,
         .num_nodes = 1,
