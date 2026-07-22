@@ -28,7 +28,7 @@ import sys
 import tempfile
 import warnings
 import weakref
-from collections import OrderedDict, UserList, defaultdict, deque
+from collections import OrderedDict, UserList, defaultdict, deque, namedtuple
 
 import pytest
 
@@ -297,6 +297,19 @@ def test_treespec_with_empty_list_string_representation():
 
 def test_treespec_with_empty_dict_string_representation():
     assert str(optree.tree_structure({})) == r'PyTreeSpec({})'
+
+
+def test_treespec_namedtuple_repr_with_divergent_fields_raises_value_error():
+    # If a namedtuple's `_fields` is mutated after the treespec is built, the recorded arity and the
+    # now-divergent field count disagree. The repr must raise a clear `ValueError` attributing the
+    # cause -- not an `InternalError` telling the user to file a bug report.
+    Point = namedtuple('Point', ('x', 'y'))  # noqa: PYI024
+    treespec = optree.tree_structure(Point(1, 2))
+    assert str(treespec) == 'PyTreeSpec(Point(x=*, y=*))'
+
+    Point._fields = ('x', 'y', 'z')  # diverge: 3 fields vs the treespec's arity of 2
+    with pytest.raises(ValueError, match=r'does not match the arity'):
+        repr(treespec)
 
 
 @disable_systrace

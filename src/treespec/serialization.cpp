@@ -140,9 +140,17 @@ std::string PyTreeSpec::ToStringImpl() const {
             case PyTreeKind::NamedTuple: {
                 const py::object type = node.node_data;
                 const auto fields = NamedTupleGetFields(type);
-                EXPECT_EQ(TupleGetSize(fields),
-                          node.arity,
-                          "Number of fields and entries does not match.");
+                // The field names are read from the (mutable) `_fields` attribute at repr time, so
+                // a caller may have changed them after the treespec was built. Report the mismatch
+                // as a `ValueError` -- not an internal error -- since the cause is external.
+                if (TupleGetSize(fields) != node.arity) [[unlikely]] {
+                    std::ostringstream oss{};
+                    oss << "Number of fields (" << TupleGetSize(fields) << ") of namedtuple type "
+                        << PyRepr(type) << " does not match the arity (" << node.arity
+                        << ") of the treespec node. The `_fields` attribute may have been modified "
+                           "after the treespec was created.";
+                    throw py::value_error(oss.str());
+                }
                 const std::string kind =
                     PyStr(EVALUATE_WITH_LOCK_HELD(py::getattr(type, "__name__"), type));
                 sstream << kind << "(";
