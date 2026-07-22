@@ -627,6 +627,29 @@ def test_treespec_pickle_roundtrip(
                 )
 
 
+@skipif_wasm
+@skipif_android
+@skipif_ios
+def test_treespec_pickle_all_protocols_roundtrip():
+    # pybind11's pickle support reconstructs cleanly only at protocol >= 2. Protocols 0 and 1 used
+    # to reconstruct via `object.__new__`, which pybind11 rejects with an untranslated C++ exception
+    # that aborts the interpreter (SIGABRT). Run in a subprocess so a regression fails this test
+    # rather than killing the whole suite.
+    check_script_in_subprocess(
+        r"""
+        import pickle
+
+        import optree
+
+        spec = optree.tree_structure({'a': [1, 2], 'b': (3, 4)})
+        for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+            restored = pickle.loads(pickle.dumps(spec, protocol=protocol))
+            assert restored == spec, (protocol, restored, spec)
+        """,
+        output=None,
+    )
+
+
 class Foo:
     def __init__(self, x, y):
         self.x = x

@@ -511,7 +511,22 @@ void BuildModule(py::module_ &mod) {  // NOLINT[runtime/references]
                         }),
              "Serialization support for PyTreeSpec.",
              py::arg("state"),
-             py::pos_only());
+             py::pos_only())
+        .def(
+            "__reduce__",
+            [](const py::handle &self) -> py::object {
+                // pybind11's pickle support (`__getstate__`/`__setstate__`) reconstructs via the
+                // protocol >= 2 `copyreg.__newobj__` reduction. At protocol 0/1 the default
+                // reduction goes through `object.__new__`, which pybind11 rejects with an
+                // untranslated C++ exception that aborts the interpreter. Return the `__newobj__`
+                // reduction explicitly so every protocol reconstructs via `cls.__new__(cls)`.
+                const py::object newobj = py::module_::import("copyreg").attr("__newobj__");
+                return py::make_tuple(newobj,
+                                      py::make_tuple(py::type::handle_of(self)),
+                                      self.attr("__getstate__")());
+            },
+            "Reduce the treespec to a pickleable form supporting all pickle protocols.",
+            py::pos_only());
 
     auto PyTreeIterTypeObject =
 #if defined(PYBIND11_HAS_INTERNALS_WITH_SMART_HOLDER_SUPPORT)
