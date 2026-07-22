@@ -361,7 +361,7 @@ class DataclassEntry(GetAttrEntry):
         return tuple(
             f.name
             for f in dataclasses.fields(self.type)
-            if f.metadata.get('pytree_node', _PYTREE_NODE_DEFAULT)
+            if f.init and f.metadata.get('pytree_node', _PYTREE_NODE_DEFAULT)
         )
 
     @property

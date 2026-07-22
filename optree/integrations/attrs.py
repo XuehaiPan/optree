@@ -153,7 +153,7 @@ class AttrsEntry(GetAttrEntry):
         return tuple(
             a.name
             for a in attrs.fields(self.type)
-            if a.metadata.get('pytree_node', _PYTREE_NODE_DEFAULT)
+            if a.init and a.metadata.get('pytree_node', _PYTREE_NODE_DEFAULT)
         )
 
     @property

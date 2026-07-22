@@ -399,21 +399,23 @@ def test_attrs_entry():
 
 
 def test_attrs_entry_integer_indexes_children():
-    # An integer entry indexes the tree CHILDREN (the `pytree_node=True` fields), not all init fields.
-    # A non-child init field interleaved between children must not shift the mapping.
+    # An integer entry indexes the tree CHILDREN -- the fields that are BOTH `pytree_node=True` and
+    # `init` -- not all init fields and not all `pytree_node` fields. A non-child field interleaved
+    # between children (a `pytree_node=False` field OR a non-`init` field) must not shift the mapping.
     @attrs.define
     class Foo:
         a: int
         b: int = optree.integrations.attrs.field(default=0, pytree_node=False)  # not a child
+        d: int = attrs.field(init=False, default=0)  # non-init -> not a tree child
         c: int = 0
 
-    foo = Foo(1, 2, 3)
-    assert tuple(a.name for a in attrs.fields(Foo)) == ('a', 'b', 'c')
+    foo = Foo(1, 2, 3)  # a=1, b=2, c=3 (d defaults to 0, not an init parameter)
+    assert tuple(a.name for a in attrs.fields(Foo)) == ('a', 'b', 'd', 'c')
 
     entry_int = optree.integrations.attrs.AttrsEntry(1, Foo, optree.PyTreeKind.CUSTOM)
-    assert entry_int.init_fields == ('a', 'b', 'c')
-    assert entry_int.children_fields == ('a', 'c')  # `b` is metadata, so the children are `a`, `c`
-    # The 2nd child is `c` (not the metadata field `b` sitting at init index 1).
+    assert entry_int.init_fields == ('a', 'b', 'c')  # `d` is not an init field
+    assert entry_int.children_fields == ('a', 'c')  # `b` is metadata and `d` is non-init
+    # The 2nd child is `c` (not the metadata field `b` nor the non-init field `d`).
     assert entry_int.field == 'c'
     assert entry_int.name == 'c'
     assert entry_int.codify('x') == 'x.c'
