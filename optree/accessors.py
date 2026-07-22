@@ -351,12 +351,18 @@ class DataclassEntry(GetAttrEntry):
     @property
     def children_fields(self, /) -> tuple[str, ...]:
         """Get the child (pytree-node) field names."""
-        from optree.dataclasses import _FIELDS  # pylint: disable=import-outside-toplevel
+        # pylint: disable-next=import-outside-toplevel
+        from optree.dataclasses import _PYTREE_NODE_DEFAULT
 
-        # The registered pytree children (a subset of the init fields), recorded at registration
-        # time. An integer entry indexes these, not all init fields.
-        children, _ = getattr(self.type, _FIELDS)  # (children, metadata) name -> field proxies
-        return tuple(children)
+        # The children are the `pytree_node=True` fields (a subset of the init fields); an integer
+        # entry indexes these. Computed from the fields rather than read from the `_FIELDS` attribute,
+        # which is only set by the `optree.dataclasses` integration -- a dataclass registered directly
+        # via the generic `register_pytree_node` (with integer entries) has no `_FIELDS`.
+        return tuple(
+            f.name
+            for f in dataclasses.fields(self.type)
+            if f.metadata.get('pytree_node', _PYTREE_NODE_DEFAULT)
+        )
 
     @property
     def field(self, /) -> str:

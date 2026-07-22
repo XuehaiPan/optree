@@ -1175,9 +1175,8 @@ def test_dataclass_entry():
 
 def test_dataclass_entry_integer_indexes_children():
     # An integer entry indexes the tree CHILDREN (the `pytree_node=True` fields), not all init fields.
-    # A non-child init field interleaved between children must not shift the mapping. The children come
-    # from the registration data (`_FIELDS`), so the class must be a registered pytree node.
-    @optree.dataclasses.dataclass(namespace='test-dc-entry-int')
+    # A non-child init field interleaved between children must not shift the mapping.
+    @dataclasses.dataclass
     class Foo:
         a: int
         b: int = optree.dataclasses.field(default=0, pytree_node=False)  # metadata, NOT a child

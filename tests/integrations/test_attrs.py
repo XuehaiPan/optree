@@ -400,9 +400,8 @@ def test_attrs_entry():
 
 def test_attrs_entry_integer_indexes_children():
     # An integer entry indexes the tree CHILDREN (the `pytree_node=True` fields), not all init fields.
-    # A non-child init field interleaved between children must not shift the mapping. The children come
-    # from the registration data (`_FIELDS`), so the class must be a registered pytree node.
-    @optree.integrations.attrs.define(namespace='test-attrs-entry-int')
+    # A non-child init field interleaved between children must not shift the mapping.
+    @attrs.define
     class Foo:
         a: int
         b: int = optree.integrations.attrs.field(default=0, pytree_node=False)  # not a child
