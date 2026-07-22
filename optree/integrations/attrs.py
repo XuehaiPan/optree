@@ -136,18 +136,26 @@ class AttrsEntry(GetAttrEntry):
     @property
     def fields(self, /) -> tuple[str, ...]:
         """Get all field names."""
-        return tuple(a.name for a in self.type.__attrs_attrs__)  # type: ignore[attr-defined]
+        return tuple(a.name for a in attrs.fields(self.type))
 
     @property
     def init_fields(self, /) -> tuple[str, ...]:
         """Get the init field names."""
-        return tuple(a.name for a in self.type.__attrs_attrs__ if a.init)  # type: ignore[attr-defined]
+        return tuple(a.name for a in attrs.fields(self.type) if a.init)
+
+    @property
+    def children_fields(self, /) -> tuple[str, ...]:
+        """Get the child (pytree-node) field names."""
+        # The registered pytree children (a subset of the init fields), recorded at registration
+        # time. An integer entry indexes these, not all init fields.
+        children, _ = getattr(self.type, _FIELDS)  # (children, metadata) name -> field proxies
+        return tuple(children)
 
     @property
     def field(self, /) -> str:
         """Get the field name."""
         if isinstance(self.entry, int):
-            return self.init_fields[self.entry]
+            return self.children_fields[self.entry]
         return self.entry
 
     @property

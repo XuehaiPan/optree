@@ -397,9 +397,28 @@ def test_attrs_entry():
     assert 'AttrsEntry' in repr(entry_str)
     assert "'x'" in repr(entry_str)
 
-    entry_int = optree.integrations.attrs.AttrsEntry(1, EntryTest, optree.PyTreeKind.CUSTOM)
-    assert entry_int.field == 'y'
-    assert entry_int.name == 'y'
+
+def test_attrs_entry_integer_indexes_children():
+    # An integer entry indexes the tree CHILDREN (the `pytree_node=True` fields), not all init fields.
+    # A non-child init field interleaved between children must not shift the mapping. The children come
+    # from the registration data (`_FIELDS`), so the class must be a registered pytree node.
+    @optree.integrations.attrs.define(namespace='test-attrs-entry-int')
+    class Foo:
+        a: int
+        b: int = optree.integrations.attrs.field(default=0, pytree_node=False)  # not a child
+        c: int = 0
+
+    foo = Foo(1, 2, 3)
+    assert tuple(a.name for a in attrs.fields(Foo)) == ('a', 'b', 'c')
+
+    entry_int = optree.integrations.attrs.AttrsEntry(1, Foo, optree.PyTreeKind.CUSTOM)
+    assert entry_int.init_fields == ('a', 'b', 'c')
+    assert entry_int.children_fields == ('a', 'c')  # `b` is metadata, so the children are `a`, `c`
+    # The 2nd child is `c` (not the metadata field `b` sitting at init index 1).
+    assert entry_int.field == 'c'
+    assert entry_int.name == 'c'
+    assert entry_int.codify('x') == 'x.c'
+    assert entry_int(foo) == foo.c == 3
 
 
 def test_accessor_codify():
