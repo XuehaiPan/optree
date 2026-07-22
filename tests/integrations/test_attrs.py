@@ -319,7 +319,7 @@ def test_register_node_failure_does_not_leak_fields_guard():
 
     namespace = 'test-attrs-register-leak'
     # Occupy the (class, namespace) slot directly so the attrs `register_node()`'s internal
-    # `register_pytree_node()` call fails -- after `register_node()` would set its `_FIELDS` guard.
+    # `register_pytree_node()` call fails, after `register_node()` would set its `_FIELDS` guard.
     optree.register_pytree_node(
         Leak,
         lambda leak: ((leak.x,), None, None),
@@ -333,7 +333,7 @@ def test_register_node_failure_does_not_leak_fields_guard():
         optree.unregister_pytree_node(Leak, namespace=namespace)
 
     # A failed registration must not leave the `_FIELDS` guard behind, or the class becomes
-    # impossible to register ever again -- every retry would raise "... more than once".
+    # impossible to register ever again: every retry would raise "... more than once".
     # Re-registration after clearing the conflicting entry must succeed.
     optree.integrations.attrs.register_node(Leak, namespace=namespace)
     optree.unregister_pytree_node(Leak, namespace=namespace)
@@ -400,8 +400,8 @@ def test_attrs_entry():
 
 
 def test_attrs_entry_integer_indexes_children():
-    # An integer entry indexes the tree CHILDREN -- the fields that are BOTH `pytree_node=True` and
-    # `init` -- not all init fields and not all `pytree_node` fields. A non-child field interleaved
+    # An integer entry indexes the tree CHILDREN (the fields that are BOTH `pytree_node=True` and
+    # `init`), not all init fields and not all `pytree_node` fields. A non-child field interleaved
     # between children (a `pytree_node=False` field OR a non-`init` field) must not shift the mapping.
     @attrs.define
     class Foo:

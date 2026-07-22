@@ -142,7 +142,7 @@ std::string PyTreeSpec::ToStringImpl() const {
                 const auto fields = NamedTupleGetFields(type);
                 // The field names are read from the (mutable) `_fields` attribute at repr time, so
                 // a caller may have changed them after the treespec was built. Report the mismatch
-                // as a `ValueError` -- not an internal error -- since the cause is external.
+                // as a `ValueError`, not an internal error, since the cause is external.
                 if (TupleGetSize(fields) != node.arity) [[unlikely]] {
                     std::ostringstream oss{};
                     oss << "Number of fields (" << TupleGetSize(fields) << ") of namedtuple type "

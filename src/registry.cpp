@@ -130,7 +130,7 @@ template <bool NoneIsLeaf>
     // subclasses BEFORE taking `sm_mutex`. `IsStructSequenceClass` / `IsNamedTupleClass` and
     // `PyErr_WarnEx` run Python and release the GIL; releasing the GIL while holding `sm_mutex` in
     // write mode inverts the GIL <-> `sm_mutex` lock order and deadlocks a concurrent flatten that
-    // holds the GIL while waiting on `sm_mutex` in read mode. Emitting here -- before any insert --
+    // holds the GIL while waiting on `sm_mutex` in read mode. Emitting here (before any insert)
     // also keeps registration atomic under warnings-as-errors (nothing is committed if it
     // escalates).
     if (IsStructSequenceClass(cls)) [[unlikely]] {

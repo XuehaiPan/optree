@@ -265,13 +265,13 @@ def test_treespec_string_representation(data):
 
 @skipif_pypy  # CPython-only: `os.stat_result` slots 7, 8, 9 are unnamed; PyPy names them
 def test_treespec_structseq_unnamed_field_string_representation():
-    # `os.stat_result` renders its UNNAMED sequence slots (7, 8, 9 -- the integer atime/mtime/ctime)
+    # `os.stat_result` renders its UNNAMED sequence slots (7, 8, 9, the integer atime/mtime/ctime)
     # in the treespec repr with the synthetic `<unnamed field>` placeholder, following CPython's
-    # `<lambda>`/`<genexpr>` convention for names that are not real identifiers (rather than the bare
-    # `unnamed field` marker, which reads as an invalid keyword). CPython's `stat_result_desc` has
-    # pinned the 7 named + 3 unnamed sequence fields (`n_in_sequence == 10`) for 16 years, so the full
-    # sequence repr is stable and asserted exactly; the hidden float `st_atime`/etc. fields (indices
-    # >= 10) are not part of the sequence and must not leak into the repr.
+    # `<lambda>`/`<genexpr>` convention for names that are not real identifiers (rather than the
+    # bare `unnamed field` marker, which reads as an invalid keyword). CPython's `stat_result_desc`
+    # has pinned the 7 named + 3 unnamed sequence fields (`n_in_sequence == 10`) for 16 years, so
+    # the full sequence repr is stable and asserted exactly; the hidden float `st_atime`/etc. fields
+    # (indices >= 10) are not part of the sequence and must not leak into the repr.
     assert os.stat_result.n_sequence_fields == 10
     assert os.stat_result.n_unnamed_fields == 3
     st = os.stat_result(range(os.stat_result.n_fields))
@@ -302,7 +302,7 @@ def test_treespec_with_empty_dict_string_representation():
 def test_treespec_namedtuple_repr_with_divergent_fields_raises_value_error():
     # If a namedtuple's `_fields` is mutated after the treespec is built, the recorded arity and the
     # now-divergent field count disagree. The repr must raise a clear `ValueError` attributing the
-    # cause -- not an `InternalError` telling the user to file a bug report.
+    # cause, not an `InternalError` telling the user to file a bug report.
     Point = namedtuple('Point', ('x', 'y'))  # noqa: PYI024
     treespec = optree.tree_structure(Point(1, 2))
     assert str(treespec) == 'PyTreeSpec(Point(x=*, y=*))'
@@ -969,7 +969,7 @@ def test_treespec_compose_allows_compatible_namespace_merge():
         assert result.b == {'x': 2}
 
         # The cross-namespace merge equals building the composed structure directly with `tree_map`
-        # in the adopted namespace -- compose's defining identity.
+        # in the adopted namespace, compose's defining identity.
         expected = optree.tree_structure(
             optree.tree_map(lambda _: {'x': 0}, GlobalOnly(0, 0), namespace='no_override'),
             namespace='no_override',
@@ -987,7 +987,7 @@ def test_treespec_compose_allows_compatible_namespace_merge():
 
 def test_treespec_broadcast_to_common_suffix_does_not_mutate_argument_on_key_mismatch():
     # Regression: BroadcastToCommonSuffixImpl built the "got key(s)" part of its key-mismatch error
-    # message by sorting the ARGUMENT spec's live dict-node key list IN PLACE -- `other_keys` was a
+    # message by sorting the ARGUMENT spec's live dict-node key list IN PLACE: `other_keys` was a
     # borrow of `node_data`, not a copy. For an OrderedDict the child subtrees stay in insertion
     # order while the keys get permuted, silently corrupting a spec the caller still holds: repr,
     # equality, hash, and unflatten all go wrong. The message must be built from a sorted COPY.
@@ -1008,8 +1008,8 @@ def test_treespec_broadcast_to_common_suffix_preserves_custom_node_entries():
     # Regression: BroadcastToCommonSuffixImpl rebuilds each non-leaf node with a designated
     # initializer that lists `.node_data` then jumps to `.custom`, silently skipping `.node_entries`
     # (which is declared between them). C++ value-initializes the omitted member to a null handle, so
-    # a custom node registered with explicit path entries -- a 3-tuple flatten `(children, metadata,
-    # entries)` -- lost them in the broadcasted spec. `entries()`/`paths()`/`accessors()` then fell
+    # a custom node registered with explicit path entries (a 3-tuple flatten `(children, metadata,
+    # entries)`) lost them in the broadcasted spec. `entries()`/`paths()`/`accessors()` then fell
     # back to the `range(arity)` integer indices, producing not just different but BROKEN accessors
     # (`GetAttrEntry(entry=0)` calls `getattr(obj, 0)`, a `TypeError`, instead of `getattr(obj, 'a')`).
     class Vector:
@@ -1029,7 +1029,7 @@ def test_treespec_broadcast_to_common_suffix_preserves_custom_node_entries():
         assert spec.entries() == ['a', 'c']
 
         # Both specs share the same custom structure, so the common suffix is that structure and the
-        # explicit string entries must survive unchanged -- not degrade to the fallback [0, 1].
+        # explicit string entries must survive unchanged, not degrade to the fallback [0, 1].
         broadcasted = spec.broadcast_to_common_suffix(other)
         assert broadcasted.entries() == ['a', 'c']
         assert broadcasted.paths() == spec.paths()
@@ -1040,8 +1040,8 @@ def test_treespec_broadcast_to_common_suffix_preserves_custom_node_entries():
 
 def test_treespec_deep_walk_raises_recursion_error_not_segfault():
     # Regression: `PathsImpl`, `AccessorsImpl`, and `BroadcastToCommonSuffixImpl` recurse once per
-    # tree level. Without a depth guard, a deeply-nested spec -- trivially built via doubling
-    # `compose` -- overflowed the native C++ stack and crashed the interpreter with a SIGSEGV instead
+    # tree level. Without a depth guard, a deeply-nested spec (trivially built via doubling
+    # `compose`) overflowed the native C++ stack and crashed the interpreter with a SIGSEGV instead
     # of raising a catchable `RecursionError`.
     # Each `compose` doubles the depth, so ceil(log2(limit)) + 1 composes push it above the limit.
     num_composes = math.ceil(math.log2(optree.MAX_RECURSION_DEPTH)) + 1
@@ -1057,8 +1057,8 @@ def test_treespec_deep_walk_raises_recursion_error_not_segfault():
         deep.broadcast_to_common_suffix(deep)
 
     # Broadcasting the deep spec against a shallower spec whose depth is still below the limit
-    # recurses only as far as the common suffix, so it must succeed -- not raise RecursionError or
-    # crash -- in either direction, returning the deeper spec.
+    # recurses only as far as the common suffix, so it must succeed (not raise RecursionError or
+    # crash) in either direction, returning the deeper spec.
     shallower = optree.tree_structure([0])
     for _ in range(num_composes - 2):  # depth 2 ** (num_composes - 2), safely below the limit
         shallower = shallower.compose(shallower)
@@ -1118,8 +1118,8 @@ def test_treespec_compose_rejects_namespace_override_with_different_arity():
 
 def test_treespec_transform_rejects_incompatible_namespace_merge():
     # `transform` unifies the namespace across the input spec and the transform outputs. If that
-    # unified (non-empty) namespace rebinds a custom node -- e.g. the input's globally-resolved
-    # custom node -- to a different registration, the transform must be rejected (same class as the
+    # unified (non-empty) namespace rebinds a custom node (e.g. the input's globally-resolved
+    # custom node) to a different registration, the transform must be rejected (same class as the
     # compose / broadcast merge rejection). A globally-only-registered type is still allowed via
     # fallback.
     class Diverge:  # variable arity; registered differently in the global and named namespaces
@@ -1200,7 +1200,7 @@ def test_treespec_from_collection_rejects_incompatible_namespace_promotion():
     # `treespec_from_collection` promotes an empty caller namespace to a child spec's namespace. If
     # that promoted namespace rebinds a custom node the collection resolved globally (the root node,
     # or a globally-resolved child) to a different registration, the result would claim the namespace
-    # while carrying the wrong registration -- it must be rejected, exactly like compose / transform /
+    # while carrying the wrong registration: it must be rejected, exactly like compose / transform /
     # broadcast. A globally-only-registered type is still allowed via fallback.
     class Diverge:  # variable arity; registered differently in the global and named namespaces
         def __init__(self, *children):
@@ -1248,7 +1248,7 @@ def test_treespec_from_collection_rejects_incompatible_namespace_promotion():
 
 def test_treespec_dict_key_order_survives_namespace_promotion():
     # A dict node's key order is fixed at BUILD time by the namespace passed then. Operations that
-    # merge/promote a spec's namespace -- `treespec_from_collection`, `compose`, `transform` -- only
+    # merge/promote a spec's namespace (`treespec_from_collection`, `compose`, `transform`) only
     # re-tag it for custom-node resolution; like `compose` they NEVER reorder an already-built dict.
     # So a dict built under the global ('') namespace (sorted keys) keeps that order even after
     # promotion to an insertion-ordered namespace, intentionally differing from the same dict built
@@ -1272,8 +1272,8 @@ def test_treespec_dict_key_order_survives_namespace_promotion():
             assert genuine.entries() == ['b', 'a']
 
             def to_namespaced_node(spec):
-                # Rewrite every non-dict node into a same-arity `Wrap` in the namespace -- generic
-                # over the node's arity rather than tied to this test's shapes -- so `f_node` alone
+                # Rewrite every non-dict node into a same-arity `Wrap` in the namespace (generic
+                # over the node's arity rather than tied to this test's shapes) so `f_node` alone
                 # can promote the spec. `transform` promotes only when some output carries a
                 # namespace, and only a custom node can. The outer dict node is kept so its key
                 # order stays observable.
@@ -1294,7 +1294,7 @@ def test_treespec_dict_key_order_survives_namespace_promotion():
                     ),
                 }
 
-            # Dicts built under the GLOBAL ('') namespace -- sorted keys (a, b) -- then promoted.
+            # Dicts built under the GLOBAL ('') namespace, sorted keys (a, b), then promoted.
             from_global = {
                 'from_collection': optree.treespec_from_collection(
                     {'b': child, 'a': child},
@@ -1303,7 +1303,7 @@ def test_treespec_dict_key_order_survives_namespace_promotion():
                 'compose': optree.tree_structure({'b': 0, 'a': 0}).compose(child),
                 **transform_combos(optree.tree_structure({'b': [0], 'a': [0]})),
             }
-            # Dicts built directly under the namespace -- insertion-order keys (b, a).
+            # Dicts built directly under the namespace, insertion-order keys (b, a).
             from_namespace = {
                 'from_collection': optree.treespec_from_collection(
                     {'b': child, 'a': child},
@@ -2093,7 +2093,7 @@ def test_treespec_leaf_none(namespace):
 def test_treespec_from_collection_on_leaf_propagates_escalated_warning():
     # `treespec_from_collection()` on a leaf issues a UserWarning via `PyErr_WarnEx()`. When warnings
     # are escalated to errors (e.g. `-W error`), the escalation must propagate cleanly as that
-    # UserWarning -- the C++ code must check `PyErr_WarnEx()`'s return value and raise, not ignore it
+    # UserWarning: the C++ code must check `PyErr_WarnEx()`'s return value and raise, not ignore it
     # and return a result with the exception left set (which pybind11 surfaces as a confusing
     # `SystemError: ... returned a result with an exception set`).
     with warnings.catch_warnings():
@@ -2472,7 +2472,7 @@ def test_treespec_constructor_namespace():
 def test_treespec_dict_constructor_preserves_insertion_ordered_namespace():
     # Regression: under `dict_insertion_ordered` mode the key order of a dict spec depends on the
     # namespace, so `treespec_dict(..., namespace=...)` must keep that namespace (like `tree_flatten`)
-    # instead of resetting it to '' -- an empty-namespace spec with unsorted keys is otherwise
+    # instead of resetting it to '': an empty-namespace spec with unsorted keys is otherwise
     # unreachable via `tree_flatten` and breaks equality/consistency.
     leaf = optree.tree_structure(0)
 
@@ -2485,7 +2485,7 @@ def test_treespec_dict_constructor_preserves_insertion_ordered_namespace():
     assert constructed.namespace == 'namespace'  # was '' before the fix
     assert constructed == flattened
 
-    # Without the mode, keys are sorted and the namespace is dropped -- same as `tree_flatten`.
+    # Without the mode, keys are sorted and the namespace is dropped, same as `tree_flatten`.
     outside = optree.treespec_dict({'b': leaf, 'a': leaf}, namespace='namespace')
     _, flattened_outside = optree.tree_flatten({'b': 1, 'a': 2}, namespace='namespace')
     assert outside.entries() == ['a', 'b']

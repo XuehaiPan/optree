@@ -147,9 +147,9 @@ class AttrsEntry(GetAttrEntry):
     def children_fields(self, /) -> tuple[str, ...]:
         """Get the child (pytree-node) field names."""
         # The children are the `pytree_node=True` fields (a subset of the init fields); an integer
-        # entry indexes these. Computed from the fields rather than read from the `_FIELDS` attribute,
-        # which is only set by the `optree.integrations.attrs` integration -- an attrs class
-        # registered directly via the generic `register_pytree_node` has no `_FIELDS`.
+        # entry indexes these. Computed from the fields rather than read from the `_FIELDS`
+        # attribute, which is only set by the `optree.integrations.attrs` integration: an attrs
+        # class registered directly via the generic `register_pytree_node` has no `_FIELDS`.
         return tuple(
             a.name
             for a in attrs.fields(self.type)

@@ -553,10 +553,10 @@ def test_unregister_pytree_node_not_found_no_deadlock_with_concurrent_flatten():
 @skipif_android
 @skipif_ios
 def test_get_registry_size_concurrent_no_spurious_error():
-    # Regression: `GetRegistrySize()` reads the two internal registries (NoneIsNode / NoneIsLeaf) and
-    # checks they differ by exactly one (the extra `None` node). Reading them in two separate locked
-    # `Size()` calls dropped the lock between the reads, so a concurrent (un)registration could slip
-    # in and spuriously trip that check -- surfacing as a `SystemError`. This manifests on
+    # Regression: `GetRegistrySize()` reads the two internal registries (NoneIsNode / NoneIsLeaf)
+    # and checks they differ by exactly one (the extra `None` node). Reading them in two separate
+    # locked `Size()` calls dropped the lock between the reads, so a concurrent (un)registration
+    # could slip in and spuriously trip that check, surfacing as a `SystemError`. This manifests on
     # free-threading builds (the GIL otherwise serializes the two reads). Hammer `get_registry_size()`
     # while a type churns in and out of the registry, in a subprocess under a watchdog; the process
     # must finish with no error recorded.
@@ -800,9 +800,9 @@ def test_pytree_node_registry_get():
 
 def test_pytree_node_registry_get_named_namespace_takes_precedence_over_global():
     # When a type is registered in BOTH the global namespace and a named namespace, the dict form of
-    # `.get(namespace=...)` must return the NAMED handler for that type -- matching the single-class
-    # lookup, which checks the named namespace before falling back to the global one. Registering the
-    # global entry LAST would otherwise let it shadow the named one in the returned dict.
+    # `.get(namespace=...)` must return the NAMED handler for that type, matching the single-class
+    # lookup, which checks the named namespace before falling back to the global one. Registering
+    # the global entry LAST would otherwise let it shadow the named one in the returned dict.
     class Both:
         def __init__(self, a):
             self.a = a

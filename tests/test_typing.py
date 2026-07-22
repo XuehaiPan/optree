@@ -621,7 +621,7 @@ def test_structseq_fields():
 
 
 def test_structseq_accessor_unnamed_fields_codify_by_index():
-    # The accessor round-trip -- the generated code evaluates to the accessed value -- must hold for
+    # The accessor round-trip (the generated code evaluates to the accessed value) must hold for
     # every slot on every implementation. It exercises both codify styles: CPython leaves
     # `os.stat_result` slots 7, 8, 9 UNNAMED, so their accessors codify to index access (matching the
     # index-based `__call__`); PyPy names those slots (`_integer_atime` etc.) and codifies them by
@@ -636,7 +636,7 @@ def test_structseq_accessor_unnamed_fields_codify_by_index():
     # Repeat with DISTINCT per-field values (`st[i] == i`) so the round-trip reliably catches the
     # unnamed-slot mislabel: a real stat's whole-second atime could coincide with integer slot 7. On
     # CPython slots 7, 8, 9 are UNNAMED, so their accessors must codify to index access; codifying slot
-    # 7 as `.st_atime` -- the hidden FLOAT field CPython's own repr mislabels it with -- would eval to
+    # 7 as `.st_atime` (the hidden FLOAT field CPython's own repr mislabels it with) would eval to
     # that wrong value. PyPy names those slots (`_integer_atime` etc.) and aliases `st_atime` back to
     # `self[7]`, so the unnamed-slot specifics below are asserted CPython-only.
     st = os.stat_result(range(os.stat_result.n_fields))

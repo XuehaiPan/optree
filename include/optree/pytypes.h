@@ -443,8 +443,8 @@ inline py::tuple StructSequenceGetFieldsImpl(const py::handle &type) {
     const auto n_sequence_fields = thread_safe_cast<py::ssize_t>(
         EVALUATE_WITH_LOCK_HELD(py::getattr(type, "n_sequence_fields"), type));
     const auto * const members = reinterpret_cast<PyTypeObject *>(type.ptr())->tp_members;
-    // `tp_members` lists only the NAMED fields -- CPython packs them and skips every
-    // `PyStructSequence_UnnamedField` slot -- but each member carries a byte `offset` that encodes
+    // `tp_members` lists only the NAMED fields (CPython packs them and skips every
+    // `PyStructSequence_UnnamedField` slot), but each member carries a byte `offset` that encodes
     // its sequence index. A struct sequence stores its items in the tuple `ob_item` array, so the
     // base offset is `offsetof(PyTupleObject, ob_item)`. Map each named member back to its slot by
     // offset and leave unnamed slots as the unnamed marker. Indexing `members[i]` by position (the

@@ -288,7 +288,7 @@ template <bool NoneIsLeaf>
     out->m_none_is_leaf = NoneIsLeaf;
     out->m_namespace = registry_namespace;
     // Reject a namespace promotion (an empty caller namespace adopting a child spec's namespace)
-    // that would rebind a custom node to a different registration than the one it holds -- e.g. the
+    // that would rebind a custom node to a different registration than the one it holds, e.g. the
     // root node, or a globally-resolved child, resolved in the global registry while the promoted
     // namespace registers the type differently. The result keeps each node's original registration,
     // mirroring the compose / transform / broadcast merge guards. Skipped for an empty namespace,

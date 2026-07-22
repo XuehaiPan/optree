@@ -229,7 +229,7 @@ def pytree_node_registry_get(  # noqa: C901
     if cls is None:
         with __REGISTRY_LOCK:
             # Collect the global handlers first, then let the named namespace override them for the
-            # same type -- mirroring the single-class lookup below, which checks the named namespace
+            # same type, mirroring the single-class lookup below, which checks the named namespace
             # before falling back to the global one. Otherwise a later global registration would
             # shadow the named handler in the returned dict.
             registry = {
