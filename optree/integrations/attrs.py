@@ -413,7 +413,10 @@ def register_node(  # noqa: C901 # pylint: disable=function-redefined,too-many-b
         raise TypeError(f'{cls!r} is not an attrs-decorated class.')
     if _FIELDS in cls.__dict__:
         raise TypeError(
-            f'Cannot register {cls.__name__} as a pytree node more than once.',
+            f'Cannot register {cls.__name__} as a pytree node more than once with '
+            f'`{__name__}.register_node()`. '
+            f'Use `optree.register_pytree_node()` with explicit flatten/unflatten functions '
+            f'to register it in a different namespace.',
         )
     if namespace is not GLOBAL_NAMESPACE and not isinstance(namespace, str):
         raise TypeError(f'The namespace must be a string, got {namespace!r}.')
@@ -444,9 +447,6 @@ def register_node(  # noqa: C901 # pylint: disable=function-redefined,too-many-b
 
     children_field_names = tuple(children_fields)
     children_aliases = tuple(a.alias for a in children_fields.values())
-    children_fields_proxy = MappingProxyType(children_fields)
-    metadata_fields_proxy = MappingProxyType(metadata_fields)
-    setattr(cls, _FIELDS, (children_fields_proxy, metadata_fields_proxy))
 
     def flatten_func(
         obj: _T,
@@ -475,4 +475,8 @@ def register_node(  # noqa: C901 # pylint: disable=function-redefined,too-many-b
         path_entry_type=AttrsEntry,
         namespace=namespace,
     )
+    # Mark the class as registered only AFTER `register_pytree_node()` succeeds: `_FIELDS` is the
+    # "already registered" guard, so setting it before a failed registration would leave the class
+    # impossible to register ever again.
+    setattr(cls, _FIELDS, (MappingProxyType(children_fields), MappingProxyType(metadata_fields)))
     return cls

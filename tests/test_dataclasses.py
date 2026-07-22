@@ -954,9 +954,50 @@ def test_register_double_registration():
 
     with pytest.raises(
         TypeError,
-        match=r'Cannot register .* as a pytree node more than once\.',
+        match=(
+            r'Cannot register .* as a pytree node more than once with '
+            r'`optree\.dataclasses\.register_node\(\)`\. '
+            r'Use `optree\.register_pytree_node\(\)` with explicit flatten/unflatten functions'
+        ),
     ):
         optree.dataclasses.register_node(Double, namespace='test-dc-double-2')
+
+    # As the error suggests, the class can still be registered in another namespace via the generic
+    # API with explicit flatten/unflatten functions.
+    optree.register_pytree_node(
+        Double,
+        lambda d: ((d.x,), None, None),
+        lambda _, children: Double(*children),
+        namespace='test-dc-double-2',
+    )
+    optree.unregister_pytree_node(Double, namespace='test-dc-double-2')
+
+
+def test_register_node_failure_does_not_leak_fields_guard():
+    @dataclasses.dataclass
+    class Leak:
+        x: int
+
+    namespace = 'test-dc-register-leak'
+    # Occupy the (class, namespace) slot directly so the dataclass `register_node()`'s internal
+    # `register_pytree_node()` call fails -- after `register_node()` would set its `_FIELDS` guard.
+    optree.register_pytree_node(
+        Leak,
+        lambda leak: ((leak.x,), None, None),
+        lambda _, children: Leak(*children),
+        namespace=namespace,
+    )
+    try:
+        with pytest.raises(ValueError, match='already registered'):
+            optree.dataclasses.register_node(Leak, namespace=namespace)
+    finally:
+        optree.unregister_pytree_node(Leak, namespace=namespace)
+
+    # A failed registration must not leave the `_FIELDS` guard behind, or the class becomes
+    # impossible to register ever again -- every retry would raise "... more than once".
+    # Re-registration after clearing the conflicting entry must succeed.
+    optree.dataclasses.register_node(Leak, namespace=namespace)
+    optree.unregister_pytree_node(Leak, namespace=namespace)
 
 
 def test_register_init_false_class_warns():
