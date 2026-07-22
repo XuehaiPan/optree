@@ -496,6 +496,7 @@ inline py::tuple StructSequenceGetFields(const py::handle &object) {
     static read_write_mutex mutex{};
     bool cache_inserted = false;
 
+    py::handle cached_fields{};
     {
 #if !defined(Py_GIL_DISABLED)
         const py::gil_scoped_release_simple gil_release{};
@@ -503,11 +504,16 @@ inline py::tuple StructSequenceGetFields(const py::handle &object) {
         const scoped_read_lock lock{mutex};
         const auto it = cache.find(type);
         if (it != cache.end()) [[likely]] {
-#if !defined(Py_GIL_DISABLED)
-            const py::gil_scoped_acquire_simple gil_acquire{};
-#endif
-            return py::reinterpret_borrow<py::tuple>(it->second);
+            cached_fields = it->second;
         }
+    }
+    // The read lock is released and the GIL re-acquired (in that destruction order) BEFORE the
+    // borrowed object is touched, so the GIL is never (re-)acquired while the lock is held. Doing
+    // so would invert the lock order against the weakref eviction callback (which holds the GIL,
+    // then takes the write lock) and could deadlock. `type` stays alive for this whole call, so its
+    // cache entry cannot be evicted and `cached_fields` remains valid.
+    if (cached_fields) [[likely]] {
+        return py::reinterpret_borrow<py::tuple>(cached_fields);
     }
 
     const py::tuple fields = EVALUATE_WITH_LOCK_HELD(StructSequenceGetFieldsImpl(type), type);
