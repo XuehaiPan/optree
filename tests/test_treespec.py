@@ -26,6 +26,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import warnings
 import weakref
 from collections import OrderedDict, UserList, defaultdict, deque, namedtuple
@@ -310,6 +311,37 @@ def test_treespec_namedtuple_repr_with_divergent_fields_raises_value_error():
     Point._fields = ('x', 'y', 'z')  # diverge: 3 fields vs the treespec's arity of 2
     with pytest.raises(ValueError, match=r'does not match the arity'):
         repr(treespec)
+
+
+def test_treespec_setstate_rejects_structseq_field_arity_mismatch():
+    # A struct sequence type's sequence-field count is fixed in C, so a treespec node's arity must
+    # equal it (unlike a namedtuple, whose `_fields` can be mutated after the fact). `FromPickleable`
+    # (via `__setstate__`/`pickle`) must reject a crafted state pairing a struct sequence type with a
+    # mismatched arity at load time, rather than build a corrupt spec that later aborts (e.g. in repr
+    # with an `InternalError`).
+    spec = optree.tree_structure(time.gmtime())  # struct_time: 9 sequence fields
+    node_states, none_is_leaf, namespace = spec.__getstate__()
+    # Swap the type to os.stat_result (10 sequence fields) while keeping the arity of 9.
+    crafted = tuple(
+        (kind, arity, os.stat_result if data is time.struct_time else data, ent, cus, nl, nn, ok)
+        for (kind, arity, data, ent, cus, nl, nn, ok) in node_states
+    )
+    obj = optree.PyTreeSpec.__new__(optree.PyTreeSpec)
+    with pytest.raises(RuntimeError, match=r'does not match the arity'):
+        obj.__setstate__((crafted, none_is_leaf, namespace))
+
+
+def test_treespec_setstate_rejects_namedtuple_field_arity_mismatch():
+    # A namedtuple's `_fields` can be mutated, so a crafted state can pair the type with an arity
+    # that no longer matches its field count. `FromPickleable` must reject it at load, rather than
+    # build a corrupt spec (the repr guards the post-load mutation case separately).
+    Point = namedtuple('Point', ('x', 'y'))  # noqa: PYI024
+    state = optree.tree_structure(Point(1, 2)).__getstate__()  # arity 2
+    Point._fields = ('x', 'y', 'z')  # diverge: 3 fields vs the pickled arity of 2
+
+    obj = optree.PyTreeSpec.__new__(optree.PyTreeSpec)
+    with pytest.raises(RuntimeError, match=r'does not match the arity'):
+        obj.__setstate__(state)
 
 
 @disable_systrace
@@ -656,6 +688,17 @@ def test_treespec_setstate_rejects_malformed_state():
         obj.__setstate__(state)
         return obj
 
+    LEAF = int(optree.PyTreeKind.LEAF)  # noqa: N806
+    TUPLE = int(optree.PyTreeKind.TUPLE)  # noqa: N806
+    DICT = int(optree.PyTreeKind.DICT)  # noqa: N806
+    NAMEDTUPLE = int(optree.PyTreeKind.NAMEDTUPLE)  # noqa: N806
+    DEFAULTDICT = int(optree.PyTreeKind.DEFAULTDICT)  # noqa: N806
+    DEQUE = int(optree.PyTreeKind.DEQUE)  # noqa: N806
+    STRUCTSEQUENCE = int(optree.PyTreeKind.STRUCTSEQUENCE)  # noqa: N806
+    NUM_KINDS = int(optree.PyTreeKind.NUM_KINDS)  # noqa: N806
+    leaf_node = (LEAF, 0, None, None, None, 1, 1, None)  # arity 0, 1 leaf, 1 node
+    keys_ab = {'a': None, 'b': None}  # original_keys for a 2-key ('a', 'b') dict node
+
     # Sanity: well-formed states still round-trip.
     for spec in [
         optree.tree_structure((0, 0)),
@@ -668,16 +711,16 @@ def test_treespec_setstate_rejects_malformed_state():
 
     # Negative arity.
     with pytest.raises(malformed_exceptions):
-        setstate((((3, -1, None, None, None, 0, 1, None),), False, ''))
+        setstate((((TUPLE, -1, None, None, None, 0, 1, None),), False, ''))
 
     # DefaultDict metadata as a list where a 2-tuple is expected previously caused a raw tuple-item
     # read to segfault; it is now coerced to a tuple and used safely.
     restored = setstate(
         (
             (
-                (1, 0, None, None, None, 1, 1, None),
-                (1, 0, None, None, None, 1, 1, None),
-                (8, 2, [int, ['a', 'b']], None, None, 2, 3, {'a': None, 'b': None}),
+                leaf_node,
+                leaf_node,
+                (DEFAULTDICT, 2, [int, ['a', 'b']], None, None, 2, 3, keys_ab),
             ),
             False,
             '',
@@ -686,46 +729,67 @@ def test_treespec_setstate_rejects_malformed_state():
     assert optree.tree_unflatten(restored, [10, 20]) == defaultdict(int, {'a': 10, 'b': 20})
 
     # DefaultDict metadata with the wrong tuple size is rejected.
+    wrong_metadata = (DEFAULTDICT, 2, (int, ['a', 'b'], 'extra'), None, None, 2, 3, keys_ab)
     with pytest.raises(malformed_exceptions):
-        setstate(
-            (
-                (
-                    (1, 0, None, None, None, 1, 1, None),
-                    (1, 0, None, None, None, 1, 1, None),
-                    (8, 2, (int, ['a', 'b'], 'extra'), None, None, 2, 3, {'a': None, 'b': None}),
-                ),
-                False,
-                '',
-            ),
-        )
+        setstate(((leaf_node, leaf_node, wrong_metadata), False, ''))
 
     # Dict key list shorter than arity (MakeNode would index past the list end).
+    short_keys = (DICT, 2, ['a'], None, None, 2, 3, keys_ab)
     with pytest.raises(malformed_exceptions):
-        setstate(
-            (
-                (
-                    (1, 0, None, None, None, 1, 1, None),
-                    (1, 0, None, None, None, 1, 1, None),
-                    (5, 2, ['a'], None, None, 2, 3, {'a': None, 'b': None}),
-                ),
-                False,
-                '',
-            ),
-        )
+        setstate(((leaf_node, leaf_node, short_keys), False, ''))
 
     # Inconsistent intermediate num_nodes (previously only the last node was checked).
     with pytest.raises(malformed_exceptions):
         setstate(
             (
                 (
-                    (1, 0, None, None, None, 1, 5, None),  # leaf claims num_nodes == 5
-                    (1, 0, None, None, None, 1, 1, None),
-                    (3, 2, None, None, None, 2, 3, None),
+                    (LEAF, 0, None, None, None, 1, 5, None),  # leaf claims num_nodes == 5
+                    leaf_node,
+                    (TUPLE, 2, None, None, None, 2, 3, None),
                 ),
                 False,
                 '',
             ),
         )
+
+    # Kind out of range: the raw integer is validated before the narrowing `uint8_t` enum cast,
+    # which would otherwise wrap a bogus value to a valid-looking kind.
+    with pytest.raises(malformed_exceptions):
+        setstate((((NUM_KINDS, 0, None, None, None, 0, 1, None),), False, ''))
+
+    # NamedTuple / StructSequence node_data that is not the expected kind of type.
+    with pytest.raises(malformed_exceptions):
+        setstate((((NAMEDTUPLE, 0, int, None, None, 0, 1, None),), False, ''))
+    with pytest.raises(malformed_exceptions):
+        setstate((((STRUCTSEQUENCE, 0, int, None, None, 0, 1, None),), False, ''))
+
+    # Deque maxlen that is neither None nor an int.
+    with pytest.raises(malformed_exceptions):
+        setstate((((DEQUE, 0, 'x', None, None, 0, 1, None),), False, ''))
+
+    # Deque maxlen smaller than the arity (a deque holds at most maxlen items, so arity <= maxlen).
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, (DEQUE, 2, 1, None, None, 2, 3, None)), False, ''))
+
+    # Dict with duplicate keys (would collapse the rebuilt dict, desyncing keys from children).
+    dup_keys = (DICT, 2, ['a', 'a'], None, None, 2, 3, keys_ab)
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, dup_keys), False, ''))
+
+    # Dict with an unhashable key.
+    unhashable_key = (DICT, 2, [[], []], None, None, 2, 3, keys_ab)
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, unhashable_key), False, ''))
+
+    # DefaultDict default_factory that is neither None nor callable.
+    bad_factory = (DEFAULTDICT, 2, (42, ['a', 'b']), None, None, 2, 3, keys_ab)
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, bad_factory), False, ''))
+
+    # Dict original_keys whose key set differs from the sorted key list.
+    mismatched_original = (DICT, 2, ['a', 'b'], None, None, 2, 3, {'a': None, 'c': None})
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, mismatched_original), False, ''))
 
 
 @parametrize(

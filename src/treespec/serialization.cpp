@@ -341,9 +341,13 @@ py::object PyTreeSpec::ToPickleable() const {
 // NOLINTBEGIN[cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers]
 // NOLINTNEXTLINE[readability-function-cognitive-complexity]
 /*static*/ std::unique_ptr<PyTreeSpec> PyTreeSpec::FromPickleable(const py::object &pickleable) {
+    const auto malformed = [](const std::string &reason) -> std::runtime_error {
+        return std::runtime_error("Malformed pickled PyTreeSpec: " + reason + ".");
+    };
+
     const auto state = thread_safe_cast<py::tuple>(pickleable);
     if (state.size() != 3) [[unlikely]] {
-        throw std::runtime_error("Malformed pickled PyTreeSpec.");
+        throw malformed("the state is not a 3-tuple");
     }
     bool none_is_leaf = false;
     std::string registry_namespace{};
@@ -351,28 +355,34 @@ py::object PyTreeSpec::ToPickleable() const {
     out->m_none_is_leaf = none_is_leaf = thread_safe_cast<bool>(state[1]);
     out->m_namespace = registry_namespace = thread_safe_cast<std::string>(state[2]);
     const auto node_states = thread_safe_cast<py::tuple>(state[0]);
+
     for (const auto &item : node_states) {
         const auto t = thread_safe_cast<py::tuple>(item);
         Node &node = out->m_traversal.emplace_back();
-        node.kind = static_cast<PyTreeKind>(thread_safe_cast<ssize_t>(t[0]));
+        const auto kind_value = thread_safe_cast<ssize_t>(t[0]);
+        if (kind_value < 0 || kind_value >= static_cast<ssize_t>(PyTreeKind::NumKinds))
+            [[unlikely]] {
+            throw malformed("the node kind is out of range");
+        }
+        node.kind = static_cast<PyTreeKind>(kind_value);
         node.arity = thread_safe_cast<ssize_t>(t[1]);
         if (t.size() != 7) [[unlikely]] {
             if (t.size() == 8) [[likely]] {
                 if (t[7].is_none()) [[likely]] {
                     if (node.kind == PyTreeKind::Dict || node.kind == PyTreeKind::DefaultDict)
                         [[unlikely]] {
-                        throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                        throw malformed("a dict node is missing its original keys");
                     }
                 } else [[unlikely]] {
                     if (node.kind == PyTreeKind::Dict || node.kind == PyTreeKind::DefaultDict)
                         [[likely]] {
                         node.original_keys = DictFromKeys(t[7]);
                     } else [[unlikely]] {
-                        throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                        throw malformed("a non-dict node must not have original keys");
                     }
                 }
             } else [[unlikely]] {
-                throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                throw malformed("a node state is not a 7- or 8-tuple");
             }
         }
         switch (node.kind) {
@@ -381,7 +391,7 @@ py::object PyTreeSpec::ToPickleable() const {
             case PyTreeKind::Tuple:
             case PyTreeKind::List: {
                 if (!t[2].is_none()) [[unlikely]] {
-                    throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                    throw malformed("a leaf, none, tuple, or list node must not have node data");
                 }
                 break;
             }
@@ -390,15 +400,36 @@ py::object PyTreeSpec::ToPickleable() const {
             case PyTreeKind::OrderedDict: {
                 node.node_data = thread_safe_cast<py::list>(t[2]);
                 if (ListGetSize(node.node_data) != node.arity) [[unlikely]] {
-                    throw std::runtime_error(
-                        "Number of keys does not match arity in pickled PyTreeSpec.");
+                    throw malformed("the number of keys does not match the arity");
+                }
+                // The keys must be hashable and distinct; a duplicate or unhashable key would
+                // collapse or fail when the dict is rebuilt, desyncing the keys from the children.
+                if (DistinctCount(node.node_data) != node.arity) [[unlikely]] {
+                    throw malformed("the keys are not distinct");
                 }
                 break;
             }
 
-            case PyTreeKind::NamedTuple:
+            case PyTreeKind::NamedTuple: {
+                node.node_data = thread_safe_cast<py::type>(t[2]);
+                if (!IsNamedTupleClass(node.node_data)) [[unlikely]] {
+                    throw malformed("the node data is not a namedtuple type");
+                }
+                if (TupleGetSize(NamedTupleGetFields(node.node_data)) != node.arity) [[unlikely]] {
+                    throw malformed("the number of fields does not match the arity");
+                }
+                break;
+            }
+
             case PyTreeKind::StructSequence: {
                 node.node_data = thread_safe_cast<py::type>(t[2]);
+                if (!IsStructSequenceClass(node.node_data)) [[unlikely]] {
+                    throw malformed("the node data is not a PyStructSequence type");
+                }
+                if (TupleGetSize(StructSequenceGetFields(node.node_data)) != node.arity)
+                    [[unlikely]] {
+                    throw malformed("the number of fields does not match the arity");
+                }
                 break;
             }
 
@@ -408,18 +439,38 @@ py::object PyTreeSpec::ToPickleable() const {
                 // avoid type-confusion on malformed input.
                 const auto metadata = thread_safe_cast<py::tuple>(t[2]);
                 if (metadata.size() != 2) [[unlikely]] {
-                    throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                    throw malformed("the defaultdict metadata is not a 2-tuple");
                 }
-                if (ListGetSize(thread_safe_cast<py::list>(metadata[1])) != node.arity)
-                    [[unlikely]] {
-                    throw std::runtime_error(
-                        "Number of keys does not match arity in pickled PyTreeSpec.");
+                // `default_factory` is passed to `defaultdict(...)`, which requires None or
+                // callable.
+                if (!(metadata[0].is_none() ||
+                      static_cast<bool>(PyCallable_Check(metadata[0].ptr())))) [[unlikely]] {
+                    throw malformed("the `default_factory` is not callable");
+                }
+                const auto keys = thread_safe_cast<py::list>(metadata[1]);
+                if (ListGetSize(keys) != node.arity) [[unlikely]] {
+                    throw malformed("the number of keys does not match the arity");
+                }
+                if (DistinctCount(keys) != node.arity) [[unlikely]] {
+                    throw malformed("the keys are not distinct");
                 }
                 node.node_data = metadata;
                 break;
             }
 
-            case PyTreeKind::Deque:
+            case PyTreeKind::Deque: {
+                // A deque's `maxlen` is None (unbounded) or a non-negative int bounding its length,
+                // so it must be at least the node's arity.
+                if (!t[2].is_none()) [[likely]] {
+                    if (PyLong_Check(t[2].ptr()) == 0 ||
+                        thread_safe_cast<ssize_t>(t[2]) < node.arity) [[unlikely]] {
+                        throw malformed("the deque maxlen is invalid");
+                    }
+                }
+                node.node_data = t[2];
+                break;
+            }
+
             case PyTreeKind::Custom: {
                 node.node_data = t[2];
                 break;
@@ -456,20 +507,37 @@ py::object PyTreeSpec::ToPickleable() const {
                 throw std::runtime_error(oss.str());
             }
         } else if (!t[3].is_none() || !t[4].is_none()) [[unlikely]] {
-            throw std::runtime_error("Malformed pickled PyTreeSpec.");
+            throw malformed("a non-custom node must not have node entries or a custom type");
         }
-        if (node.original_keys && DictGetSize(node.original_keys) != node.arity) [[unlikely]] {
-            throw std::runtime_error("Number of keys does not match arity in pickled PyTreeSpec.");
+        if (node.original_keys) [[unlikely]] {
+            if (DictGetSize(node.original_keys) != node.arity) [[unlikely]] {
+                throw malformed("the number of original keys does not match the arity");
+            }
+            // `original_keys` records the insertion order of the same keys stored (sorted) in
+            // node_data; its key set must match, or unflatten would map children onto keys the dict
+            // never had.
+            const auto keys = (node.kind == PyTreeKind::DefaultDict
+                                   ? TupleGetItemAs<py::list>(node.node_data, 1)
+                                   : py::reinterpret_borrow<py::list>(node.node_data));
+            for (const py::handle &key : keys) {
+                const int contains = PyDict_Contains(node.original_keys.ptr(), key.ptr());
+                if (contains < 0) [[unlikely]] {
+                    throw py::error_already_set();
+                }
+                if (contains == 0) [[unlikely]] {
+                    throw malformed("the keys do not match the original keys");
+                }
+            }
         }
         if (node.node_entries && !node.node_entries.is_none() &&
             TupleGetSize(node.node_entries) != node.arity) [[unlikely]] {
-            throw std::runtime_error(
-                "Number of node entries does not match arity in pickled PyTreeSpec.");
+            throw malformed("the number of node entries does not match the arity");
         }
 
         node.num_leaves = thread_safe_cast<ssize_t>(t[5]);
         node.num_nodes = thread_safe_cast<ssize_t>(t[6]);
     }
+
     // Validate that the reconstructed traversal is structurally consistent.
     // `PYTREESPEC_SANITY_CHECK` only checks the final node, so a malformed pickle could otherwise
     // smuggle in inconsistent arity / num_nodes / num_leaves that cause out-of-bounds access when
@@ -480,10 +548,10 @@ py::object PyTreeSpec::ToPickleable() const {
         subtree_sizes.reserve(out->m_traversal.size());
         for (const Node &node : out->m_traversal) {
             if (node.arity < 0 || node.num_leaves < 0 || node.num_nodes < 1) [[unlikely]] {
-                throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                throw malformed("a node has a negative arity or size");
             }
             if (static_cast<ssize_t>(subtree_sizes.size()) < node.arity) [[unlikely]] {
-                throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                throw malformed("a node has more children than available subtrees");
             }
             ssize_t children_num_nodes = 0;
             ssize_t children_num_leaves = 0;
@@ -497,14 +565,15 @@ py::object PyTreeSpec::ToPickleable() const {
                 (node.kind == PyTreeKind::Leaf ? ssize_t{1} : children_num_leaves);
             if (node.num_nodes != expected_num_nodes || node.num_leaves != expected_num_leaves)
                 [[unlikely]] {
-                throw std::runtime_error("Malformed pickled PyTreeSpec.");
+                throw malformed("a node's size is inconsistent with its children");
             }
             subtree_sizes.emplace_back(node.num_nodes, node.num_leaves);
         }
         if (subtree_sizes.size() != 1) [[unlikely]] {
-            throw std::runtime_error("Malformed pickled PyTreeSpec.");
+            throw malformed("the traversal does not yield a single tree");
         }
     }
+
     out->m_traversal.shrink_to_fit();
     PYTREESPEC_SANITY_CHECK(*out);
     return out;

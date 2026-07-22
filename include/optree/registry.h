@@ -56,6 +56,12 @@ enum class PyTreeKind : std::uint8_t {
     NumKinds,        // Number of kinds (placed at the end)
 };
 
+// A new pytree kind must keep `NumKinds` within the `std::uint8_t` underlying type; otherwise the
+// enum cannot represent every value and code that narrows a kind to `std::uint8_t` (e.g. pickle
+// deserialization in `PyTreeSpec::FromPickleable`) would silently wrap.
+static_assert(static_cast<ssize_t>(PyTreeKind::NumKinds) <= UINT8_MAX,
+              "PyTreeKind::NumKinds overflows its std::uint8_t underlying type.");
+
 constexpr PyTreeKind kCustom = PyTreeKind::Custom;
 constexpr PyTreeKind kLeaf = PyTreeKind::Leaf;
 constexpr PyTreeKind kNone = PyTreeKind::None;

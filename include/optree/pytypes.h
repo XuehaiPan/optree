@@ -622,3 +622,12 @@ inline std::pair<py::list, py::list> DictKeysDifference(const py::list & /*uniqu
     TotalOrderSort(extra_keys);
     return std::make_pair(std::move(missing_keys), std::move(extra_keys));
 }
+
+inline py::ssize_t DistinctCount(const py::handle &iterable) {
+    const scoped_critical_section cs{iterable};
+    const auto set = py::reinterpret_steal<py::object>(PySet_New(iterable.ptr()));
+    if (!set) [[unlikely]] {  // a non-iterable or an unhashable element raised here
+        throw py::error_already_set();
+    }
+    return PySet_GET_SIZE(set.ptr());
+}
