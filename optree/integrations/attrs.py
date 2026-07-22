@@ -428,8 +428,8 @@ def register_node(  # noqa: C901 # pylint: disable=function-redefined,too-many-b
         raise TypeError(
             f'Cannot register {cls.__name__} as a pytree node more than once with '
             f'`{__name__}.register_node()`. '
-            f'Use `optree.register_pytree_node()` with explicit flatten/unflatten functions '
-            f'to register it in a different namespace.',
+            'Use `optree.register_pytree_node()` or `optree.register_pytree_node_class()` '
+            'with explicit flatten/unflatten functions to register it in a different namespace.',
         )
     if namespace is not GLOBAL_NAMESPACE and not isinstance(namespace, str):
         raise TypeError(f'The namespace must be a string, got {namespace!r}.')

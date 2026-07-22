@@ -551,8 +551,8 @@ def register_node(  # noqa: C901 # pylint: disable=function-redefined,too-many-b
         raise TypeError(
             f'Cannot register {cls.__name__} as a pytree node more than once with '
             f'`{__name__}.register_node()`. '
-            f'Use `optree.register_pytree_node()` with explicit flatten/unflatten functions '
-            f'to register it in a different namespace.',
+            'Use `optree.register_pytree_node()` or `optree.register_pytree_node_class()` '
+            'with explicit flatten/unflatten functions to register it in a different namespace.',
         )
     if namespace is not GLOBAL_NAMESPACE and not isinstance(namespace, str):
         raise TypeError(f'The namespace must be a string, got {namespace!r}.')
@@ -565,6 +565,24 @@ def register_node(  # noqa: C901 # pylint: disable=function-redefined,too-many-b
             f'`{__name__}.register_node()` reconstructs instances with `cls(**kwargs)`.',
             UserWarning,
             stacklevel=2,
+        )
+
+    # `InitVar` pseudo-fields are excluded from `dataclasses.fields()` (so they are neither children
+    # nor metadata) but remain required `__init__` parameters that `cls(**kwargs)` cannot restore.
+    # `__dataclass_fields__` includes them, tagged with the private `_FIELD_INITVAR` field type.
+    init_var_names = [
+        name
+        for name, dc_field in cls.__dataclass_fields__.items()
+        # pylint: disable-next=protected-access
+        if dc_field._field_type is dataclasses._FIELD_INITVAR  # type: ignore[attr-defined]
+    ]
+    if init_var_names:
+        raise TypeError(
+            f'Dataclass {cls.__name__!r} has `InitVar` field(s) {init_var_names!r}, which the '
+            'auto-generated flatten/unflatten functions cannot round-trip '
+            f'(`{__name__}.register_node()` reconstructs instances with `cls(**kwargs)` and cannot '
+            'restore `InitVar` values). Use `optree.register_pytree_node()` or '
+            '`optree.register_pytree_node_class()` with explicit flatten/unflatten functions instead.',
         )
 
     children_fields = {}

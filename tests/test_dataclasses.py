@@ -957,7 +957,8 @@ def test_register_double_registration():
         match=(
             r'Cannot register .* as a pytree node more than once with '
             r'`optree\.dataclasses\.register_node\(\)`\. '
-            r'Use `optree\.register_pytree_node\(\)` with explicit flatten/unflatten functions'
+            r'Use `optree\.register_pytree_node\(\)` or `optree\.register_pytree_node_class\(\)` '
+            r'with explicit flatten/unflatten functions'
         ),
     ):
         optree.dataclasses.register_node(Double, namespace='test-dc-double-2')
@@ -971,6 +972,48 @@ def test_register_double_registration():
         namespace='test-dc-double-2',
     )
     optree.unregister_pytree_node(Double, namespace='test-dc-double-2')
+
+
+def test_register_dataclass_with_initvar_rejected():
+    # A dataclass with an `InitVar` cannot round-trip via the auto-generated flatten/unflatten:
+    # `InitVar`s are excluded from `dataclasses.fields()` (so they are neither flattened nor stored)
+    # yet remain required `__init__` parameters that `cls(**kwargs)` cannot restore. `register_node()`
+    # rejects it and points to the generic API with explicit flatten/unflatten functions.
+    @dataclasses.dataclass
+    class WithInitVar:
+        x: float
+        scale: dataclasses.InitVar[float]
+        scaled: float = optree.dataclasses.field(init=False, pytree_node=False, default=0.0)
+
+        def __post_init__(self, scale):
+            self.scaled = self.x * scale
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            r'has `InitVar` field\(s\) .*cannot round-trip.*'
+            r'Use `optree\.register_pytree_node\(\)` or `optree\.register_pytree_node_class\(\)`'
+        ),
+    ):
+        optree.dataclasses.register_node(WithInitVar, namespace='test-dc-initvar')
+
+    # The generic API with explicit flatten/unflatten works: keep the derived value as metadata and
+    # rebuild the instance without re-running `__init__`/`__post_init__`.
+    def flatten(obj):
+        return (obj.x,), obj.scaled
+
+    def unflatten(scaled, children):
+        rebuilt = WithInitVar.__new__(WithInitVar)
+        rebuilt.x = children[0]
+        rebuilt.scaled = scaled
+        return rebuilt
+
+    optree.register_pytree_node(WithInitVar, flatten, unflatten, namespace='test-dc-initvar')
+    obj = WithInitVar(3.0, 10.0)
+    leaves, treespec = optree.tree_flatten(obj, namespace='test-dc-initvar')
+    assert leaves == [3.0]
+    assert optree.tree_unflatten(treespec, leaves) == obj
+    optree.unregister_pytree_node(WithInitVar, namespace='test-dc-initvar')
 
 
 def test_register_node_failure_does_not_leak_fields_guard():

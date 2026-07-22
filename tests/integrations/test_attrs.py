@@ -295,7 +295,8 @@ def test_register_double_registration():
         match=(
             r'Cannot register .* as a pytree node more than once with '
             r'`optree\.integrations\.attrs\.register_node\(\)`\. '
-            r'Use `optree\.register_pytree_node\(\)` with explicit flatten/unflatten functions'
+            r'Use `optree\.register_pytree_node\(\)` or `optree\.register_pytree_node_class\(\)` '
+            r'with explicit flatten/unflatten functions'
         ),
     ):
         optree.integrations.attrs.register_node(Double, namespace='test-attrs-double-2')
