@@ -727,6 +727,36 @@ def test_pytree_node_registry_get():
             assert handler is registry3[cls]
 
 
+def test_pytree_node_registry_get_named_namespace_takes_precedence_over_global():
+    # When a type is registered in BOTH the global namespace and a named namespace, the dict form of
+    # `.get(namespace=...)` must return the NAMED handler for that type -- matching the single-class
+    # lookup, which checks the named namespace before falling back to the global one. Registering the
+    # global entry LAST would otherwise let it shadow the named one in the returned dict.
+    class Both:
+        def __init__(self, a):
+            self.a = a
+
+    def flatten(both):
+        return (both.a,), None, None
+
+    def unflatten(metadata, children):
+        return Both(*children)
+
+    optree.register_pytree_node(Both, flatten, unflatten, namespace='both-ns')
+    optree.register_pytree_node(Both, flatten, unflatten, namespace=GLOBAL_NAMESPACE)
+    try:
+        # Single-class lookup already prefers the named namespace.
+        assert optree.register_pytree_node.get(Both, namespace='both-ns').namespace == 'both-ns'
+        # The dict form must agree: the named handler wins over the global one.
+        registry = optree.register_pytree_node.get(namespace='both-ns')
+        assert registry[Both].namespace == 'both-ns'
+        # The global-only view still shows the global handler.
+        assert optree.register_pytree_node.get(namespace=GLOBAL_NAMESPACE)[Both].namespace == ''
+    finally:
+        optree.unregister_pytree_node(Both, namespace='both-ns')
+        optree.unregister_pytree_node(Both, namespace=GLOBAL_NAMESPACE)
+
+
 def test_pytree_node_registry_get_with_invalid_arguments():
     registry = optree.register_pytree_node.get()
     assert optree.register_pytree_node.get(None) == registry
