@@ -549,6 +549,77 @@ def test_unregister_pytree_node_not_found_no_deadlock_with_concurrent_flatten():
     )
 
 
+@skipif_wasm
+@skipif_android
+@skipif_ios
+def test_get_registry_size_concurrent_no_spurious_error():
+    # Regression: `GetRegistrySize()` reads the two internal registries (NoneIsNode / NoneIsLeaf) and
+    # checks they differ by exactly one (the extra `None` node). Reading them in two separate locked
+    # `Size()` calls dropped the lock between the reads, so a concurrent (un)registration could slip
+    # in and spuriously trip that check -- surfacing as a `SystemError`. This manifests on
+    # free-threading builds (the GIL otherwise serializes the two reads). Hammer `get_registry_size()`
+    # while a type churns in and out of the registry, in a subprocess under a watchdog; the process
+    # must finish with no error recorded.
+    check_script_in_subprocess(
+        """
+        import faulthandler
+        import threading
+
+        import optree
+        import optree._C as _C
+
+        class MyType:
+            def __init__(self, children):
+                self.children = children
+
+        faulthandler.dump_traceback_later(30, exit=True)  # watchdog: abort the process on a hang
+
+        errors = []
+        stop = threading.Event()
+
+        def register_loop():
+            for _ in range(50000):
+                try:
+                    optree.register_pytree_node(
+                        MyType,
+                        lambda o: (tuple(o.children), None, None),
+                        lambda _, c: MyType(list(c)),
+                        namespace='size-race',
+                    )
+                except ValueError:
+                    pass
+                try:
+                    optree.unregister_pytree_node(MyType, namespace='size-race')
+                except ValueError:
+                    pass
+            stop.set()
+
+        def size_loop():
+            while not stop.is_set():
+                try:
+                    _C.get_registry_size()
+                    _C.get_registry_size('size-race')
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(repr(exc))
+                    return
+
+        threads = [
+            threading.Thread(target=register_loop),
+            threading.Thread(target=size_loop),
+            threading.Thread(target=size_loop),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert not errors, errors
+        print('COMPLETED')
+        """,
+        output='COMPLETED',
+        rstrip=True,
+    )
+
+
 def test_flatten_with_wrong_number_of_returns():
     @optree.register_pytree_node_class(namespace='error')
     class MyList1(UserList):

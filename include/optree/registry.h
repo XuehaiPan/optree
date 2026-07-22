@@ -133,8 +133,12 @@ public:
         auto &registry1 = GetSingleton<NONE_IS_NODE>();
         auto &registry2 = GetSingleton<NONE_IS_LEAF>();
 
-        const ssize_t count1 = registry1.Size(registry_namespace);
-        const ssize_t count2 = registry2.Size(registry_namespace);
+        // Read both registries under a single lock so the two counts form a consistent snapshot.
+        // Two separate `Size()` calls each drop the lock, letting a concurrent (un)registration
+        // slip between them and spuriously trip the invariant check below.
+        const scoped_read_lock lock{sm_mutex};
+        const ssize_t count1 = registry1.SizeImpl(registry_namespace);
+        const ssize_t count2 = registry2.SizeImpl(registry_namespace);
         EXPECT_EQ(count1,
                   count2 + 1,
                   "The number of registered types in the two registries should match "
@@ -233,6 +237,9 @@ private:
                                                         const std::string &registry_namespace,
                                                         const bool &is_structsequence_class,
                                                         const bool &is_namedtuple_class);
+
+    // Get the number of registered types without locking. The caller must hold `sm_mutex`.
+    [[nodiscard]] ssize_t SizeImpl(const std::optional<std::string> &registry_namespace) const;
 
     // Initialize the registry for the current interpreter.
     static void Init();

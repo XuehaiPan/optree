@@ -69,9 +69,8 @@ template <bool NoneIsLeaf>
 template PyTreeTypeRegistry &PyTreeTypeRegistry::GetSingleton<NONE_IS_NODE>();
 template PyTreeTypeRegistry &PyTreeTypeRegistry::GetSingleton<NONE_IS_LEAF>();
 
-ssize_t PyTreeTypeRegistry::Size(const std::optional<std::string> &registry_namespace) const {
-    const scoped_read_lock lock{sm_mutex};
-
+ssize_t PyTreeTypeRegistry::SizeImpl(const std::optional<std::string> &registry_namespace) const {
+    // The caller must hold `sm_mutex`.
     ssize_t count = py::ssize_t_cast(m_registrations.size());
     for (const auto &[named_type, _] : m_named_registrations) {
         if (!registry_namespace || named_type.first == *registry_namespace) [[likely]] {
@@ -79,6 +78,11 @@ ssize_t PyTreeTypeRegistry::Size(const std::optional<std::string> &registry_name
         }
     }
     return count;
+}
+
+ssize_t PyTreeTypeRegistry::Size(const std::optional<std::string> &registry_namespace) const {
+    const scoped_read_lock lock{sm_mutex};
+    return SizeImpl(registry_namespace);
 }
 
 template <bool NoneIsLeaf>
