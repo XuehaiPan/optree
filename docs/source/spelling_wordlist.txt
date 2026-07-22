@@ -2,6 +2,7 @@ abc
 ABCMeta
 accessor
 accessors
+antisymmetric
 arg
 args
 arity
@@ -71,6 +72,7 @@ OrderedDict
 param
 params
 pragma
+preorder
 py
 pypy
 pytree

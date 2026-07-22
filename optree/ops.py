@@ -2974,9 +2974,67 @@ def treespec_is_prefix(
     *,
     strict: bool = False,
 ) -> bool:
-    """Return whether ``treespec`` is a prefix of ``other_treespec``.
+    r"""Return whether ``treespec`` is a prefix of ``other_treespec``.
+
+    A treespec is a *prefix* of another when the latter can be built by replacing some of the
+    former's leaves with subtrees. This is the broadcasting-compatibility relation behind
+    multi-input :func:`tree_map` and :func:`tree_broadcast_prefix`: a prefix treespec broadcasts
+    over any tree it is a prefix of, pairing each of its leaves with the corresponding subtree of
+    the fuller structure.
 
     See also :func:`treespec_is_suffix` and :meth:`PyTreeSpec.is_prefix`.
+
+    The prefix relation, together with :func:`treespec_is_suffix` and the ``<``, ``<=``, ``>``,
+    ``>=`` operators (``<`` and ``>`` are the ``strict=True`` variants), is a **preorder**:
+    reflexive (every treespec is a non-strict prefix of itself) and transitive, but **neither a
+    partial order nor a total order**.
+
+    - Not antisymmetric (so not a partial order): ``a <= b and b <= a`` does **not** imply
+      ``a == b``. Metadata that does not change how children are partitioned, such as a
+      :class:`collections.deque` ``maxlen`` or a :class:`dict` key order, is transparent to the
+      prefix relation but significant to equality, so they are mutual prefixes yet unequal.
+    - Not total: two treespecs can be incomparable, with neither a prefix of the other. Examples
+      are a :class:`tuple` and a same-arity :class:`list`, or :class:`dict`\s with different key
+      sets.
+
+    >>> treespec_is_prefix(tree_structure(1), tree_structure([1, 2, 3]))
+    True
+    >>> treespec_is_prefix(tree_structure([1, 2, 3]), tree_structure(1))
+    False
+
+    Mutual prefixes need not be equal, since the relation is a preorder, not a partial order. A
+    :class:`collections.deque` ``maxlen`` is transparent to the prefix relation but significant to
+    equality:
+
+    >>> from collections import deque
+    >>> a = tree_structure(deque([1, 2], maxlen=2))
+    >>> b = tree_structure(deque([1, 2], maxlen=5))
+    >>> treespec_is_prefix(a, b) and treespec_is_prefix(b, a)
+    True
+    >>> a <= b and b <= a
+    True
+    >>> a == b
+    False
+
+    Two treespecs can be incomparable, since the relation is not a total order. A :class:`tuple`
+    and a same-arity :class:`list` are neither a prefix of the other:
+
+    >>> a = tree_structure((1, 2))
+    >>> b = tree_structure([1, 2])
+    >>> treespec_is_prefix(a, b)
+    False
+    >>> treespec_is_prefix(b, a)
+    False
+    >>> a <= b
+    False
+    >>> b <= a
+    False
+    >>> a < b
+    False
+    >>> b < a
+    False
+    >>> a == b
+    False
 
     Args:
         treespec (PyTreeSpec): A treespec.
@@ -2999,7 +3057,18 @@ def treespec_is_suffix(
 ) -> bool:
     """Return whether ``treespec`` is a suffix of ``other_treespec``.
 
+    This is the reverse of :func:`treespec_is_prefix`: ``treespec_is_suffix(a, b)`` is equivalent to
+    ``treespec_is_prefix(b, a)``. Like the prefix relation, it is a **preorder**: reflexive and
+    transitive, but neither a partial order (mutual suffixes need not be equal) nor a total order
+    (two treespecs can be incomparable). See :func:`treespec_is_prefix` for the full discussion and
+    examples.
+
     See also :func:`treespec_is_prefix` and :meth:`PyTreeSpec.is_suffix`.
+
+    >>> treespec_is_suffix(tree_structure([1, 2, 3]), tree_structure(1))
+    True
+    >>> treespec_is_suffix(tree_structure(1), tree_structure([1, 2, 3]))
+    False
 
     Args:
         treespec (PyTreeSpec): A treespec.

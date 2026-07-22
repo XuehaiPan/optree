@@ -1369,6 +1369,51 @@ def test_treespec_is_prefix_nested_dict_key_reorder():
     assert b2 <= a2
 
 
+def test_treespec_is_prefix_deque_maxlen_agnostic():
+    # A deque's treespec stores both its arity and its `maxlen`, but `is_prefix` is arity-based and
+    # deliberately `maxlen`-AGNOSTIC. A deque holds at most `maxlen` items, so `arity <= maxlen`
+    # always holds and two flatten-compatible deques necessarily share the same arity while carrying
+    # any `maxlen1`/`maxlen2`; `maxlen` does not affect how children are partitioned, so gating the
+    # prefix relation on it would wrongly reject valid `flatten_up_to`/`broadcast_prefix` operations.
+    # `EqualTo`, by contrast, IS `maxlen`-sensitive (`unflatten` restores the exact `maxlen`), so
+    # `a <= b and b <= a` does NOT imply `a == b`: `is_prefix` is a preorder, not a partial order.
+    a = optree.tree_structure(deque([1, 2, 3], maxlen=3))
+    b = optree.tree_structure(deque([1, 2, 3], maxlen=5))
+    unbounded = optree.tree_structure(deque([1, 2, 3]))  # maxlen=None
+    # Equality distinguishes maxlen (bounded vs bounded, and bounded vs unbounded).
+    assert a != b
+    assert a != unbounded
+    assert b != unbounded
+
+    # Same arity, any maxlen (bounded or unbounded): mutual non-strict prefixes and suffixes,
+    # even though the specs are unequal, so mutual prefixes do NOT imply equality (a preorder).
+    for x, y in itertools.permutations([a, b, unbounded], 2):
+        assert x != y
+        assert optree.treespec_is_prefix(x, y, strict=False)
+        assert optree.treespec_is_suffix(x, y, strict=False)
+        assert x <= y
+        assert x >= y
+
+    # Practical consequence: a prefix deque flattens / broadcasts a full deque of a different maxlen.
+    prefix_spec = optree.tree_structure(deque([1, 2, 3], maxlen=None))
+    assert prefix_spec.flatten_up_to(deque([[10], [20, 21], [30]], maxlen=5)) == [
+        [10],
+        [20, 21],
+        [30],
+    ]
+    assert optree.broadcast_prefix(
+        deque([1, 2, 3], maxlen=3),
+        deque([[0], [0, 0], [0]], maxlen=7),
+    ) == [1, 2, 2, 3]
+
+    # Arity still gates the relation: a different-arity deque is not a prefix.
+    assert not optree.treespec_is_prefix(
+        optree.tree_structure(deque([1, 2], maxlen=9)),
+        a,
+        strict=False,
+    )
+
+
 @parametrize(
     tree=TREES,
     none_is_leaf=[False, True],
