@@ -544,8 +544,9 @@ py::object PyTreeSpec::ToPickleable() const {
     // the spec is later used. Walk the post-order traversal, folding each node's children off a
     // stack of subtree sizes.
     {
-        auto subtree_sizes = std::vector<std::pair<ssize_t, ssize_t>>{};  // (num_nodes, num_leaves)
-        subtree_sizes.reserve(out->m_traversal.size());
+        auto subtree_sizes =
+            reserved_vector</*(num_nodes, num_leaves)*/ std::pair<ssize_t, ssize_t>>(
+                out->m_traversal.size());
         for (const Node &node : out->m_traversal) {
             if (node.arity < 0 || node.num_leaves < 0 || node.num_nodes < 1) [[unlikely]] {
                 throw malformed("a node has a negative arity or size");
