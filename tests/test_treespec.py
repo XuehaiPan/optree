@@ -777,6 +777,11 @@ def test_treespec_setstate_rejects_malformed_state():
     with pytest.raises(malformed_exceptions):
         setstate(((leaf_node, (LEAF, 1, None, None, None, 1, 2, None)), False, ''))
 
+    # A None-kind node cannot appear when none_is_leaf is set (None is flattened as a leaf then, so
+    # a flattened tree never contains a None node); accepting one later raises an InternalError.
+    with pytest.raises(malformed_exceptions):
+        setstate((((NONE, 0, None, None, None, 0, 1, None),), True, ''))
+
     # Node data on a tuple or list node.
     with pytest.raises(malformed_exceptions):
         setstate(((leaf_node, leaf_node, (TUPLE, 2, 'data', None, None, 2, 3, None)), False, ''))

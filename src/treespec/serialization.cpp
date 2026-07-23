@@ -411,6 +411,12 @@ py::object PyTreeSpec::ToPicklable() const {
                 if (node.arity != 0) [[unlikely]] {
                     throw malformed("a leaf or none node must have arity 0");
                 }
+                // With `none_is_leaf`, None is flattened as a leaf, so a flattened tree never
+                // contains a None-kind node; a reconstructed one would later trip an InternalError
+                // in `FlattenUpTo` (`GetKind` never returns `None` under `NoneIsLeaf`).
+                if (node.kind == PyTreeKind::None && none_is_leaf) [[unlikely]] {
+                    throw malformed("a none node cannot appear when none_is_leaf is set");
+                }
                 break;
             }
 
