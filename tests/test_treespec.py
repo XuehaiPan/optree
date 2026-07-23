@@ -711,7 +711,9 @@ def test_treespec_setstate_rejects_malformed_state():
         obj.__setstate__(state)
         return obj
 
+    CUSTOM = int(optree.PyTreeKind.CUSTOM)  # noqa: N806
     LEAF = int(optree.PyTreeKind.LEAF)  # noqa: N806
+    NONE = int(optree.PyTreeKind.NONE)  # noqa: N806
     TUPLE = int(optree.PyTreeKind.TUPLE)  # noqa: N806
     DICT = int(optree.PyTreeKind.DICT)  # noqa: N806
     NAMEDTUPLE = int(optree.PyTreeKind.NAMEDTUPLE)  # noqa: N806
@@ -794,6 +796,14 @@ def test_treespec_setstate_rejects_malformed_state():
     with pytest.raises(malformed_exceptions):
         setstate(((leaf_node, leaf_node, (DEQUE, 2, 1, None, None, 2, 3, None)), False, ''))
 
+    # Leaf or none nodes are childless; a nonzero arity absorbs the preceding subtrees while still
+    # folding consistently, so the reconstructed spec reports a leaf/None while its num_leaves counts
+    # the absorbed children and unflatten silently drops them.
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, (NONE, 1, None, None, None, 1, 2, None)), False, ''))
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, (LEAF, 1, None, None, None, 1, 2, None)), False, ''))
+
     # Dict with duplicate keys (would collapse the rebuilt dict, desyncing keys from children).
     dup_keys = (DICT, 2, ['a', 'a'], None, None, 2, 3, keys_ab)
     with pytest.raises(malformed_exceptions):
@@ -813,6 +823,76 @@ def test_treespec_setstate_rejects_malformed_state():
     mismatched_original = (DICT, 2, ['a', 'b'], None, None, 2, 3, {'a': None, 'c': None})
     with pytest.raises(malformed_exceptions):
         setstate(((leaf_node, leaf_node, mismatched_original), False, ''))
+
+    # A state that is not a 3-tuple.
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node,), False))
+
+    # A node state that is not a 7- or 8-tuple.
+    with pytest.raises(malformed_exceptions):
+        setstate((((LEAF, 0, None, None, None, 1),), False, ''))
+
+    # A negative leaf count, or a non-positive node count.
+    with pytest.raises(malformed_exceptions):
+        setstate((((LEAF, 0, None, None, None, -1, 1, None),), False, ''))
+    with pytest.raises(malformed_exceptions):
+        setstate((((LEAF, 0, None, None, None, 1, 0, None),), False, ''))
+
+    # Node data on a kind that must not carry any (leaf and tuple shown).
+    with pytest.raises(malformed_exceptions):
+        setstate((((LEAF, 0, 'data', None, None, 1, 1, None),), False, ''))
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, (TUPLE, 2, 'data', None, None, 2, 3, None)), False, ''))
+
+    # A dict node missing its original keys, and a non-dict node carrying them.
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, (DICT, 2, ['a', 'b'], None, None, 2, 3, None)), False, ''))
+    with pytest.raises(malformed_exceptions):
+        setstate((((LEAF, 0, None, None, None, 1, 1, keys_ab),), False, ''))
+
+    # Original keys whose count (not just key set) disagrees with the arity.
+    short_original = (DICT, 2, ['a', 'b'], None, None, 2, 3, {'a': None})
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, short_original), False, ''))
+
+    # DefaultDict keys too few, and DefaultDict keys not distinct (the Dict variants are above).
+    defaultdict_short = (DEFAULTDICT, 2, (int, ['a']), None, None, 2, 3, keys_ab)
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, defaultdict_short), False, ''))
+    defaultdict_dup = (DEFAULTDICT, 2, (int, ['a', 'a']), None, None, 2, 3, keys_ab)
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node, defaultdict_dup), False, ''))
+
+    # A non-custom node carrying node entries or a custom type.
+    with pytest.raises(malformed_exceptions):
+        setstate(
+            ((leaf_node, leaf_node, (TUPLE, 2, None, ('a', 'b'), None, 2, 3, None)), False, ''),
+        )
+
+    # A node claiming more children than the traversal provides.
+    with pytest.raises(malformed_exceptions):
+        setstate((((TUPLE, 2, None, None, None, 2, 3, None),), False, ''))
+
+    # A traversal that yields more than one tree.
+    with pytest.raises(malformed_exceptions):
+        setstate(((leaf_node, leaf_node), False, ''))
+
+    # A custom node whose node-entries count disagrees with the arity (needs a registered type).
+    class MalformedCustomNode:
+        pass
+
+    optree.register_pytree_node(
+        MalformedCustomNode,
+        lambda obj: ((), None),
+        lambda metadata, children: MalformedCustomNode(),
+        namespace='malformed',
+    )
+    try:
+        custom_node = (CUSTOM, 2, None, ('one-entry',), MalformedCustomNode, 2, 3, None)
+        with pytest.raises(malformed_exceptions):
+            setstate(((leaf_node, leaf_node, custom_node), False, 'malformed'))
+    finally:
+        optree.unregister_pytree_node(MalformedCustomNode, namespace='malformed')
 
 
 @parametrize(
