@@ -22,7 +22,7 @@ limitations under the License.
 #include <string>         // std::string
 #include <thread>         // std::this_thread::get_id
 #include <unordered_set>  // std::unordered_set
-#include <utility>        // std::pair
+#include <utility>        // std::pair, std::move
 #include <vector>         // std::vector
 
 #include "optree/optree.h"
@@ -323,16 +323,31 @@ py::object PyTreeSpec::ToPicklable() const {
         const scoped_critical_section2 cs{
             node.custom != nullptr ? py::handle{node.custom->type} : py::handle{},
             node.node_data};
-        TupleSetItem(node_states,
-                     i++,
-                     py::make_tuple(py::int_(static_cast<ssize_t>(node.kind)),
-                                    py::int_(node.arity),
-                                    node.node_data ? node.node_data : py::none(),
-                                    node.node_entries ? node.node_entries : py::none(),
-                                    node.custom != nullptr ? node.custom->type : py::none(),
-                                    py::int_(node.num_leaves),
-                                    py::int_(node.num_nodes),
-                                    node.original_keys ? node.original_keys : py::none()));
+
+        // Copy the node's mutable containers so the pickled state cannot alias (and, if the caller
+        // mutates it, corrupt) the immutable spec. Only dict-like keys are mutable and internal; a
+        // namedtuple/PyStructSequence type or custom metadata is left as-is.
+        py::object node_data =
+            node.node_data ? py::reinterpret_borrow<py::object>(node.node_data) : py::none();
+        if (node.kind == PyTreeKind::Dict || node.kind == PyTreeKind::OrderedDict) [[unlikely]] {
+            node_data = node.node_data.attr("copy")();
+        } else if (node.kind == PyTreeKind::DefaultDict) [[unlikely]] {
+            const auto metadata = py::reinterpret_borrow<py::tuple>(node.node_data);
+            node_data =
+                py::make_tuple(TupleGetItem(metadata, 0), TupleGetItem(metadata, 1).attr("copy")());
+        }
+
+        TupleSetItem(
+            node_states,
+            i++,
+            py::make_tuple(py::int_(static_cast<ssize_t>(node.kind)),
+                           py::int_(node.arity),
+                           std::move(node_data),
+                           node.node_entries ? node.node_entries : py::none(),
+                           node.custom != nullptr ? node.custom->type : py::none(),
+                           py::int_(node.num_leaves),
+                           py::int_(node.num_nodes),
+                           node.original_keys ? node.original_keys.attr("copy")() : py::none()));
     }
     return py::make_tuple(node_states, py::bool_(m_none_is_leaf), py::str(m_namespace));
 }

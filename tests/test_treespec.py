@@ -729,6 +729,129 @@ def test_treespec_pickle_missing_registration():
         treespec = pickle.loads(serialized)
 
 
+def test_treespec_getstate_does_not_alias_internal_node_data():
+    # `__getstate__` (used by `pickle`) must return a snapshot, not aliases of the immutable spec's
+    # internal mutable containers: the keys of a dict/OrderedDict/defaultdict node and its
+    # insertion-order keys dict. Mutating the returned state otherwise reaches back into the spec,
+    # desyncing the keys from the arity (repr raises an InternalError) or adding a spurious
+    # original key (unflatten returns an extra entry). A custom node's entries are immutable.
+    class Custom:
+        def __init__(self, *values):
+            self.values = values
+
+    optree.register_pytree_node(
+        Custom,
+        lambda custom: (custom.values, None, tuple(range(len(custom.values)))),
+        lambda metadata, children: Custom(*children),
+        namespace='getstate_snapshot',
+    )
+    try:
+        tree = {
+            'b': Custom(1, 2),
+            'a': 3,
+            'od': OrderedDict([('y', 4), ('x', 5)]),
+            'dd': defaultdict(int, {'q': 6, 'p': 7}),
+        }
+        spec = optree.tree_structure(tree, namespace='getstate_snapshot')
+        node_states, _, _ = state = spec.__getstate__()
+        before = repr(state)
+
+        for node in node_states:
+            kind, node_data, node_entries, original_keys = node[0], node[2], node[3], node[7]
+            if kind in {optree.PyTreeKind.DICT, optree.PyTreeKind.ORDEREDDICT}:
+                node_data.append('injected')  # a dict/OrderedDict node's keys list
+            elif kind == optree.PyTreeKind.DEFAULTDICT:
+                node_data[1].append('injected')  # a defaultdict's (default_factory, keys) tuple
+            if isinstance(original_keys, dict):
+                original_keys['injected'] = None
+            assert node_entries is None or isinstance(node_entries, tuple)  # entries are immutable
+
+        assert repr(spec.__getstate__()) == before, 'mutating the pickled state corrupted the spec'
+    finally:
+        optree.unregister_pytree_node(Custom, namespace='getstate_snapshot')
+
+
+def test_treespec_getstate_aliases_custom_node_data():
+    # Limitation (characterization test): a custom node's `node_data` is the user-provided metadata,
+    # which `__getstate__` passes through by reference. optree copies its own dict/defaultdict keys
+    # (see `test_treespec_getstate_does_not_alias_internal_node_data`) but cannot generically
+    # deep-copy arbitrary metadata, so mutating it via the pickled state reaches back into the spec.
+    # Protecting custom metadata is the caller's responsibility; this pins the behavior.
+    class Custom:
+        def __init__(self, *children, alpha, beta=None):
+            self.children = children
+            self.metadata = {'alpha': alpha, 'beta': beta}
+
+        def __eq__(self, other):
+            return (
+                isinstance(other, Custom)
+                and self.children == other.children
+                and self.metadata == other.metadata
+            )
+
+        __hash__ = None
+
+    optree.register_pytree_node(
+        Custom,
+        lambda custom: (custom.children, custom.metadata),  # mutable dict metadata
+        lambda metadata, children: Custom(*children, **metadata),
+        namespace='getstate_alias_custom',
+    )
+    try:
+        leaves, treespec = optree.tree_flatten(
+            Custom(1, 2, alpha=3, beta=4),
+            namespace='getstate_alias_custom',
+        )
+        before = repr(treespec)
+        custom_state = next(
+            node for node in treespec.__getstate__()[0] if node[0] == optree.PyTreeKind.CUSTOM
+        )
+        assert custom_state[2] == {'alpha': 3, 'beta': 4}
+
+        # Mutate the aliased metadata in place via the pickled state.
+        custom_state[2]['gamma'] = 5  # mutate the aliased metadata in place
+
+        aliased = next(
+            node for node in treespec.__getstate__()[0] if node[0] == optree.PyTreeKind.CUSTOM
+        )
+        assert aliased[2] is custom_state[2]
+        assert aliased[2] == {'alpha': 3, 'beta': 4, 'gamma': 5}  # the mutation reached the spec
+        assert repr(treespec) == before.replace(
+            repr({'alpha': 3, 'beta': 4}),
+            repr({'alpha': 3, 'beta': 4, 'gamma': 5}),
+        )
+        # The corruption even reaches what `tree_unflatten` rebuilds, not just repr/getstate.
+        with pytest.raises(TypeError, match=r'unexpected keyword argument'):
+            optree.tree_unflatten(treespec, leaves)
+
+        # Mutate again
+        custom_state[2].clear()
+        custom_state[2]['alpha'] = 42
+        aliased = next(
+            node for node in treespec.__getstate__()[0] if node[0] == optree.PyTreeKind.CUSTOM
+        )
+        assert aliased[2] is custom_state[2]
+        assert aliased[2] == {'alpha': 42}
+        assert repr(treespec) == before.replace(
+            repr({'alpha': 3, 'beta': 4}),
+            repr({'alpha': 42}),
+        )
+        reconstructed = optree.tree_unflatten(treespec, leaves)
+        reconstructed_treespec = optree.tree_structure(
+            reconstructed,
+            namespace='getstate_alias_custom',
+        )
+        assert reconstructed == Custom(1, 2, alpha=42)
+        assert reconstructed.metadata == {'alpha': 42, 'beta': None}
+        assert reconstructed_treespec != treespec
+        assert repr(reconstructed_treespec) == before.replace(
+            repr({'alpha': 3, 'beta': 4}),
+            repr({'alpha': 42, 'beta': None}),
+        )
+    finally:
+        optree.unregister_pytree_node(Custom, namespace='getstate_alias_custom')
+
+
 def test_treespec_setstate_rejects_malformed_state():
     # `PyTreeSpec.__setstate__` (used by `pickle`) must reject structurally malformed state rather
     # than build a corrupt spec that triggers out-of-bounds reads / crashes when later used. The
