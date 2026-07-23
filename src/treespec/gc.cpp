@@ -63,6 +63,7 @@ namespace optree {
     return 0;
 }
 
+// NOLINTNEXTLINE[readability-function-cognitive-complexity]
 /*static*/ int PyTreeIter::PyTpTraverse(PyObject *self_base, visitproc visit, void *arg) {
     Py_VISIT(Py_TYPE(self_base));
     if (!::is_holder_constructed(self_base)) [[unlikely]] {

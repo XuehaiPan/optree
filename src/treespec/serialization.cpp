@@ -26,7 +26,6 @@ limitations under the License.
 #include <vector>         // std::vector
 
 #include "optree/optree.h"
-#include "optree/pytypes.h"
 
 namespace optree {
 

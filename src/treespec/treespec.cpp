@@ -442,6 +442,7 @@ std::optional<py::object> PyTreeSpec::FindReregisteredCustomType(
             nodes[start_num_nodes].num_leaves};
 }
 
+// NOLINTNEXTLINE[readability-function-cognitive-complexity]
 std::unique_ptr<PyTreeSpec> PyTreeSpec::BroadcastToCommonSuffix(const PyTreeSpec &other) const {
     PYTREESPEC_SANITY_CHECK(*this);
     PYTREESPEC_SANITY_CHECK(other);
@@ -660,6 +661,7 @@ std::unique_ptr<PyTreeSpec> PyTreeSpec::Transform(const std::optional<py::functi
     return treespec;
 }
 
+// NOLINTNEXTLINE[readability-function-cognitive-complexity]
 std::unique_ptr<PyTreeSpec> PyTreeSpec::Compose(const PyTreeSpec &inner) const {
     PYTREESPEC_SANITY_CHECK(*this);
     PYTREESPEC_SANITY_CHECK(inner);

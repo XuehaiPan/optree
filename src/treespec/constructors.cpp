@@ -80,6 +80,7 @@ template <bool NoneIsLeaf>
         dict_order_flags.in_current_namespace;
 
     const auto verify_children =
+        // NOLINTNEXTLINE[readability-function-cognitive-complexity]
         [&handle, &node, &registry_namespace, &is_dict_insertion_ordered_in_current_namespace](
             const std::vector<py::object> &children,
             std::vector<PyTreeSpec> &treespecs) -> void {
@@ -123,8 +124,8 @@ template <bool NoneIsLeaf>
                 throw py::value_error(oss.str());
             }
         } else if (node.kind != PyTreeKind::Custom &&
-                   !((node.kind == PyTreeKind::Dict || node.kind == PyTreeKind::DefaultDict) &&
-                     is_dict_insertion_ordered_in_current_namespace)) [[likely]] {
+                   ((node.kind != PyTreeKind::Dict && node.kind != PyTreeKind::DefaultDict) ||
+                    !is_dict_insertion_ordered_in_current_namespace)) [[likely]] {
             // Drop the namespace for namespace-independent nodes. A Dict/DefaultDict whose keys are
             // kept in insertion order does depend on the namespace (see the sort at the Dict case),
             // so keep it there, mirroring `Flatten`
