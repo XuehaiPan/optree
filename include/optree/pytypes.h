@@ -17,6 +17,7 @@ limitations under the License.
 
 #pragma once
 
+#include <cstddef>        // std::size_t
 #include <exception>      // std::rethrow_exception, std::current_exception
 #include <optional>       // std::optional
 #include <string>         // std::string

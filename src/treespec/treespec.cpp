@@ -22,7 +22,7 @@ limitations under the License.
 #include <sstream>    // std::ostringstream
 #include <string>     // std::string
 #include <tuple>      // std::tuple
-#include <utility>    // std::move
+#include <utility>    // std::move, std::pair
 #include <vector>     // std::vector
 
 #include "optree/optree.h"
