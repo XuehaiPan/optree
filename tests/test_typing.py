@@ -34,6 +34,7 @@ from helpers import (
     CustomTuple,
     Py_GIL_DISABLED,
     Vector2D,
+    check_script_in_subprocess,
     disable_systrace,
     gc_collect,
     getrefcount,
@@ -711,3 +712,35 @@ def test_structseq_fields_cache():
     if not Py_GIL_DISABLED:
         assert called_with == 'Foo'
         assert wr() is None
+
+
+@skipif_pypy  # CPython-only: uses `atexit._ncallbacks()` and CPython type caches
+def test_type_caches_register_interpreter_cleanup():
+    # optree keeps three process-global type caches: namedtuple classification, PyStructSequence
+    # classification, and PyStructSequence field names. Each registers one per-interpreter `atexit`
+    # cleanup on its first insert (the classification caches at import via the registry, the
+    # field-name cache on first use). Measuring in a clean subprocess before importing optree pins
+    # optree's whole footprint: one callback for the registry plus one per cache.
+    check_script_in_subprocess(
+        r"""
+        import atexit
+        import time
+
+        n0 = atexit._ncallbacks()
+        import optree
+        n1 = atexit._ncallbacks()
+        optree.is_namedtuple(int)
+        n2 = atexit._ncallbacks()
+        optree.is_structseq(int)
+        n3 = atexit._ncallbacks()
+        optree.structseq_fields(time.struct_time)
+        n4 = atexit._ncallbacks()
+
+        assert n0 < n1, (n0, n1)
+        assert n1 <= n2, (n1, n2)
+        assert n2 <= n3, (n2, n3)
+        assert n3 <= n4, (n3, n4)
+        assert n4 - n0 == 4, (n0, n1, n2, n3, n4)
+        """,
+        output=None,
+    )
