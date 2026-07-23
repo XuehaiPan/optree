@@ -412,6 +412,34 @@ def test_treespec_self_referential():
         assert wr() is None
 
 
+@skipif_pypy  # relies on CPython's reference-cycle collector
+def test_treespec_custom_node_reference_cycle_is_collectable():
+    # A treespec transitively references a registered custom type (and its flatten/unflatten/
+    # path-entry funcs) through the shared registration held by its Custom node. `PyTpTraverse` must
+    # report those objects so the cyclic GC can see and collect a reference cycle that passes through
+    # them; otherwise the cycle leaks once the registry no longer pins the registration.
+    class Cyclic:
+        pass
+
+    optree.register_pytree_node(
+        Cyclic,
+        lambda cyclic: ((), None),
+        lambda metadata, children: None,  # never called; the test only needs the registration
+        namespace='cycle_gc',
+    )
+    try:
+        treespec = optree.tree_structure(Cyclic(), namespace='cycle_gc')
+        # Cycle: Cyclic -> __dict__ -> treespec -> registration -> Cyclic
+        Cyclic.self_spec = treespec
+    finally:
+        optree.unregister_pytree_node(Cyclic, namespace='cycle_gc')
+
+    wr = weakref.ref(Cyclic)
+    del Cyclic, treespec
+    gc_collect()
+    assert wr() is None
+
+
 @disable_systrace
 def test_treeiter_self_referential():
     sentinel = object()

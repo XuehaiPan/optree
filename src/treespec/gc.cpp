@@ -43,6 +43,17 @@ namespace optree {
         Py_VISIT(node.node_data.ptr());
         Py_VISIT(node.node_entries.ptr());
         Py_VISIT(node.original_keys.ptr());
+        if (node.custom != nullptr) [[unlikely]] {
+            // The custom registration is shared with (and pinned by) the registry, but the treespec
+            // transitively references its Python members; report them so the cyclic GC can see and
+            // collect reference cycles that pass through a registered custom type or its functions.
+            // `PyTpClear` needs no counterpart: `m_traversal.clear()` drops the treespec's hold on
+            // the registration (a `shared_ptr`), which is the correct way to break the cycle.
+            Py_VISIT(node.custom->type.ptr());
+            Py_VISIT(node.custom->flatten_func.ptr());
+            Py_VISIT(node.custom->unflatten_func.ptr());
+            Py_VISIT(node.custom->path_entry_type.ptr());
+        }
     }
     return 0;
 }
