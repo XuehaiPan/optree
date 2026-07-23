@@ -343,3 +343,68 @@ def test_import_in_subinterpreters_concurrently():
         output='',
         rerun=NUM_FLAKY_RERUNS,
     )
+
+
+def test_type_cache_cleanup_across_subinterpreters():
+    # Exercise the process-global type caches across subinterpreter create/destroy churn. The caches
+    # key on the type's memory ADDRESS, which the allocator may recycle after a type is freed. Each
+    # interpreter flattens a RANDOMLY chosen type and reads its treespec repr: the flatten fires the
+    # classification cache (namedtuple or PyStructSequence), and the repr of a PyStructSequence also
+    # fires the field-name cache. Distinct field names make a stale entry on a recycled address
+    # observable as a wrong field name, a wrong leaf count, or a crash. Running in a subprocess
+    # makes finalization real (the subinterpreters on close, the main interpreter on exit).
+    check_script_in_subprocess(
+        f"""
+        import contextlib
+        import textwrap
+        from concurrent import interpreters
+
+        resolve = textwrap.dedent(
+            '''
+            import keyword
+            import os
+            import random
+            import string
+            import time
+            from collections import namedtuple
+
+            import optree
+
+            # Distinct PyStructSequence types, each with a distinct first sequence field.
+            cases = [
+                (os.stat_result, 'st_mode'),
+                (time.struct_time, 'tm_year'),
+                (os.times_result, 'user'),
+            ]
+            case = random.choice([*cases, None])
+            if case is None:
+                # Exercise the classification cache with a namedtuple type.
+                field_names = []
+                while not field_names:
+                    field_names = [
+                        ''.join(random.choices(string.ascii_lowercase, k=random.randint(1, 8)))
+                        for _ in range(random.randint(2, 5))
+                    ]
+                    field_names = [n for n in field_names if not keyword.iskeyword(n)]  # avoid reserved names
+                    field_names = list(dict.fromkeys(field_names))  # deduplicate
+                NamedTupleType = namedtuple('NamedTupleType', field_names)
+                leaves, treespec = optree.tree_flatten(NamedTupleType(*range(len(field_names))))
+                assert len(leaves) == len(field_names), (leaves, treespec)
+                assert (field_names[0] + '=*') in repr(treespec), repr(treespec)
+            else:
+                # Exercise the classification cache and the field-name cache with a PyStructSequence type.
+                PyStructSequenceType, first_field = case
+                obj = PyStructSequenceType(range(PyStructSequenceType.n_sequence_fields))
+                assert (first_field + '=*') in repr(optree.tree_structure(obj)), first_field
+            '''
+        ).strip()
+
+        exec(resolve)  # the main interpreter resolves a random type
+        for _ in range({NUM_FUTURES}):
+            with contextlib.closing(interpreters.create()) as subinterpreter:
+                subinterpreter.exec(resolve)
+        exec(resolve)  # the main interpreter must still resolve correctly after the churn
+        """,
+        output='',
+        rerun=NUM_FLAKY_RERUNS,
+    )

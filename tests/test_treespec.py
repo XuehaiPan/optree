@@ -314,17 +314,17 @@ def test_treespec_namedtuple_repr_with_divergent_fields_raises_value_error():
 
 
 def test_treespec_setstate_rejects_structseq_field_arity_mismatch():
-    # A struct sequence type's sequence-field count is fixed in C, so a treespec node's arity must
-    # equal it (unlike a namedtuple, whose `_fields` can be mutated after the fact). `FromPickleable`
-    # (via `__setstate__`/`pickle`) must reject a crafted state pairing a struct sequence type with a
-    # mismatched arity at load time, rather than build a corrupt spec that later aborts (e.g. in repr
-    # with an `InternalError`).
+    # A PyStructSequence type's sequence-field count is fixed in C, so a node's arity must equal it
+    # (unlike a namedtuple, whose `_fields` can be mutated after the fact). `FromPickleable` (via
+    # `__setstate__`/`pickle`) must reject a crafted state pairing a PyStructSequence type with a
+    # mismatched arity at load time, rather than build a corrupt treespec that later aborts (e.g. in
+    # repr with an `InternalError`).
     spec = optree.tree_structure(time.gmtime())  # struct_time: 9 sequence fields
     node_states, none_is_leaf, namespace = spec.__getstate__()
     # Swap the type to os.stat_result (10 sequence fields) while keeping the arity of 9.
     crafted = tuple(
-        (kind, arity, os.stat_result if data is time.struct_time else data, ent, cus, nl, nn, ok)
-        for (kind, arity, data, ent, cus, nl, nn, ok) in node_states
+        (kind, arity, os.stat_result if data is time.struct_time else data, *remaining)
+        for (kind, arity, data, *remaining) in node_states
     )
     obj = optree.PyTreeSpec.__new__(optree.PyTreeSpec)
     with pytest.raises(RuntimeError, match=r'does not match the arity'):
