@@ -18,10 +18,11 @@ limitations under the License.
 #pragma once
 
 #include <exception>      // std::rethrow_exception, std::current_exception
+#include <optional>       // std::optional
 #include <string>         // std::string
-#include <type_traits>    // std::enable_if_t, std::is_base_of_v
+#include <type_traits>    // std::enable_if_t, std::is_same_v, std::is_base_of_v, std::conditional_t
 #include <unordered_map>  // std::unordered_map
-#include <utility>        // std::move, std::pair, std::make_pair
+#include <utility>        // std::forward, std::pair, std::make_pair, std::move
 #include <vector>         // std::vector
 
 #include <Python.h>
@@ -50,9 +51,6 @@ inline Py_ALWAYS_INLINE std::string PyRepr(const py::handle &object) {
 inline Py_ALWAYS_INLINE std::string PyRepr(const std::string &string) {
     return static_cast<std::string>(py::repr(py::str(string)));
 }
-
-// The maximum size of the type cache.
-constexpr py::ssize_t MAX_TYPE_CACHE_SIZE = 4096;
 
 #define PyNoneTypeObject                                                                           \
     (py::reinterpret_borrow<py::object>(reinterpret_cast<PyObject *>(Py_TYPE(Py_None))))
@@ -215,6 +213,101 @@ inline Py_ALWAYS_INLINE void AssertExactDeque(const py::handle &object) {
     }
 }
 
+// A process-global cache keyed by a weakly-referenceable Python object (in practice a type),
+// mapping it to a value computed from that key (e.g. whether a type is a namedtuple, or its
+// PyStructSequence field names). The cache is a function-local static shared by every interpreter
+// and outlives the Python runtime. Each entry is evicted by a weakref callback when its key is
+// garbage-collected. `ResultType` may be a value (e.g. `bool`) or a pybind11 reference (a
+// `py::object` subclass such as `py::tuple`, or a `py::handle`): a reference entry owns one
+// reference that is dropped on eviction, and a lookup returns a fresh owning borrow for a
+// `py::object` or the stored borrowed handle for a `py::handle`.
+template <typename ResultType>
+class WeakKeyCache {
+public:
+    explicit WeakKeyCache(const std::size_t &max_size) : m_max_size{max_size} {}
+    ~WeakKeyCache() = default;
+
+    WeakKeyCache(const WeakKeyCache &) = delete;
+    WeakKeyCache(WeakKeyCache &&) = delete;
+    WeakKeyCache &operator=(const WeakKeyCache &) = delete;
+    WeakKeyCache &operator=(WeakKeyCache &&) = delete;
+
+    // Return the value cached for `key`, computing and inserting it via `compute` on a miss.
+    // `compute` is a nullary callable returning `ResultType`, invoked with the GIL held and the
+    // cache lock NOT held.
+    template <typename Compute>
+    [[nodiscard]] ResultType LookupOrInsert(const py::handle &key, Compute &&compute) {
+        std::optional<StoredType> cached_result{};
+        {
+#if !defined(Py_GIL_DISABLED)
+            const py::gil_scoped_release_simple gil_release{};
+#endif
+            const scoped_read_lock lock{m_mutex};
+            const auto it = m_cache.find(key);
+            if (it != m_cache.end()) [[likely]] {
+                cached_result = it->second;
+            }
+        }
+        // The read lock is released and the GIL re-acquired (in that destruction order) BEFORE the
+        // borrowed object is touched, so the GIL is never (re-)acquired while the lock is held.
+        // Doing so would invert the lock order against the weakref eviction callback (which holds
+        // the GIL, then takes the write lock) and could deadlock. `key` stays alive for the whole
+        // call, so its entry cannot be evicted and `cached_result` stays valid.
+        if (cached_result.has_value()) [[likely]] {
+            if constexpr (std::is_same_v<StoredType, ResultType>) {
+                // A value or a `py::handle`: the stored type is the result type.
+                return *cached_result;
+            } else {
+                // An owning object stored as a borrowed `py::handle`: return a fresh owning borrow.
+                return py::reinterpret_borrow<ResultType>(*cached_result);
+            }
+        }
+
+        ResultType result = std::forward<Compute>(compute)();
+        bool inserted = false;
+        {
+#if !defined(Py_GIL_DISABLED)
+            const py::gil_scoped_release_simple gil_release{};
+#endif
+            const scoped_write_lock lock{m_mutex};
+            if (m_cache.size() < m_max_size) [[likely]] {
+                // The GIL is released here, so store the value without touching any refcount (a
+                // reference value is stored as a borrowed `py::handle` and owned by the `inc_ref()`
+                // below).
+                inserted = m_cache.emplace(key, StoredType{result}).second;
+            }
+        }
+        if (inserted) [[likely]] {
+            if constexpr (kResultIsPyReference) {
+                // The GIL is held here, so increment the reference count of the stored object to
+                // own it.
+                result.inc_ref();
+            }
+            (void)py::weakref(key, py::cpp_function([this, key](py::handle weakref) -> void {
+                                  const scoped_write_lock lock{m_mutex};
+                                  const auto it = m_cache.find(key);
+                                  if (it != m_cache.end()) [[likely]] {
+                                      if constexpr (kResultIsPyReference) {
+                                          it->second.dec_ref();
+                                      }
+                                      m_cache.erase(it);
+                                  }
+                                  weakref.dec_ref();
+                              }))
+                .release();
+        }
+        return result;
+    }
+
+private:
+    static constexpr bool kResultIsPyReference = std::is_base_of_v<py::handle, ResultType>;
+    using StoredType = std::conditional_t<kResultIsPyReference, py::handle, ResultType>;
+
+    std::unordered_map<py::handle, StoredType> m_cache{};
+    const std::size_t m_max_size{};
+    mutable read_write_mutex m_mutex{};
+};
+
 // NOLINTNEXTLINE[readability-function-cognitive-complexity]
 inline bool IsNamedTupleClassImpl(const py::handle &type) {
     // We can only identify namedtuples heuristically, here by the presence of a _fields attribute.
@@ -259,40 +352,10 @@ inline bool IsNamedTupleClass(const py::handle &type) {
         return false;
     }
 
-    static auto cache = std::unordered_map<py::handle, bool>{};
-    static read_write_mutex mutex{};
-    bool cache_inserted = false;
-
-    {
-#if !defined(Py_GIL_DISABLED)
-        const py::gil_scoped_release_simple gil_release{};
-#endif
-        const scoped_read_lock lock{mutex};
-        const auto it = cache.find(type);
-        if (it != cache.end()) [[likely]] {
-            return it->second;
-        }
-    }
-
-    const bool result = EVALUATE_WITH_LOCK_HELD(IsNamedTupleClassImpl(type), type);
-    {
-#if !defined(Py_GIL_DISABLED)
-        const py::gil_scoped_release_simple gil_release{};
-#endif
-        const scoped_write_lock lock{mutex};
-        if (cache.size() < MAX_TYPE_CACHE_SIZE) [[likely]] {
-            cache_inserted = cache.emplace(type, result).second;
-        }
-    }
-    if (cache_inserted) [[likely]] {
-        (void)py::weakref(type, py::cpp_function([type](py::handle weakref) -> void {
-                              const scoped_write_lock lock{mutex};
-                              cache.erase(type);
-                              weakref.dec_ref();
-                          }))
-            .release();
-    }
-    return result;
+    static WeakKeyCache<bool> cache{4096};
+    return cache.LookupOrInsert(type, [&type]() -> bool {
+        return EVALUATE_WITH_LOCK_HELD(IsNamedTupleClassImpl(type), type);
+    });
 }
 inline Py_ALWAYS_INLINE bool IsNamedTupleInstance(const py::handle &object) {
     return IsNamedTupleClass(py::type::handle_of(object));
@@ -370,40 +433,10 @@ inline bool IsStructSequenceClass(const py::handle &type) {
         return false;
     }
 
-    static auto cache = std::unordered_map<py::handle, bool>{};
-    static read_write_mutex mutex{};
-    bool cache_inserted = false;
-
-    {
-#if !defined(Py_GIL_DISABLED)
-        const py::gil_scoped_release_simple gil_release{};
-#endif
-        const scoped_read_lock lock{mutex};
-        const auto it = cache.find(type);
-        if (it != cache.end()) [[likely]] {
-            return it->second;
-        }
-    }
-
-    const bool result = EVALUATE_WITH_LOCK_HELD(IsStructSequenceClassImpl(type), type);
-    {
-#if !defined(Py_GIL_DISABLED)
-        const py::gil_scoped_release_simple gil_release{};
-#endif
-        const scoped_write_lock lock{mutex};
-        if (cache.size() < MAX_TYPE_CACHE_SIZE) [[likely]] {
-            cache_inserted = cache.emplace(type, result).second;
-        }
-    }
-    if (cache_inserted) [[likely]] {
-        (void)py::weakref(type, py::cpp_function([type](py::handle weakref) -> void {
-                              const scoped_write_lock lock{mutex};
-                              cache.erase(type);
-                              weakref.dec_ref();
-                          }))
-            .release();
-    }
-    return result;
+    static WeakKeyCache<bool> cache{4096};
+    return cache.LookupOrInsert(type, [&type]() -> bool {
+        return EVALUATE_WITH_LOCK_HELD(IsStructSequenceClassImpl(type), type);
+    });
 }
 inline Py_ALWAYS_INLINE bool IsStructSequenceInstance(const py::handle &object) {
     return IsStructSequenceClass(py::type::handle_of(object));
@@ -492,54 +525,10 @@ inline py::tuple StructSequenceGetFields(const py::handle &object) {
         }
     }
 
-    static auto cache = std::unordered_map<py::handle, py::handle>{};
-    static read_write_mutex mutex{};
-    bool cache_inserted = false;
-
-    py::handle cached_fields{};
-    {
-#if !defined(Py_GIL_DISABLED)
-        const py::gil_scoped_release_simple gil_release{};
-#endif
-        const scoped_read_lock lock{mutex};
-        const auto it = cache.find(type);
-        if (it != cache.end()) [[likely]] {
-            cached_fields = it->second;
-        }
-    }
-    // The read lock is released and the GIL re-acquired (in that destruction order) BEFORE the
-    // borrowed object is touched, so the GIL is never (re-)acquired while the lock is held. Doing
-    // so would invert the lock order against the weakref eviction callback (which holds the GIL,
-    // then takes the write lock) and could deadlock. `type` stays alive for this whole call, so its
-    // cache entry cannot be evicted and `cached_fields` remains valid.
-    if (cached_fields) [[likely]] {
-        return py::reinterpret_borrow<py::tuple>(cached_fields);
-    }
-
-    const py::tuple fields = EVALUATE_WITH_LOCK_HELD(StructSequenceGetFieldsImpl(type), type);
-    {
-#if !defined(Py_GIL_DISABLED)
-        const py::gil_scoped_release_simple gil_release{};
-#endif
-        const scoped_write_lock lock{mutex};
-        if (cache.size() < MAX_TYPE_CACHE_SIZE) [[likely]] {
-            cache_inserted = cache.emplace(type, fields).second;
-        }
-    }
-    if (cache_inserted) [[likely]] {
-        fields.inc_ref();
-        (void)py::weakref(type, py::cpp_function([type](py::handle weakref) -> void {
-                              const scoped_write_lock lock{mutex};
-                              const auto it = cache.find(type);
-                              if (it != cache.end()) [[likely]] {
-                                  it->second.dec_ref();
-                                  cache.erase(it);
-                              }
-                              weakref.dec_ref();
-                          }))
-            .release();
-    }
-    return fields;
+    static WeakKeyCache<py::tuple> cache{4096};
+    return cache.LookupOrInsert(type, [&type]() -> py::tuple {
+        return EVALUATE_WITH_LOCK_HELD(StructSequenceGetFieldsImpl(type), type);
+    });
 }
 
 inline void TotalOrderSort(py::list &list) {  // NOLINT[runtime/references]
