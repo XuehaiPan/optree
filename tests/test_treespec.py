@@ -315,7 +315,7 @@ def test_treespec_namedtuple_repr_with_divergent_fields_raises_value_error():
 
 def test_treespec_setstate_rejects_structseq_field_arity_mismatch():
     # A PyStructSequence type's sequence-field count is fixed in C, so a node's arity must equal it
-    # (unlike a namedtuple, whose `_fields` can be mutated after the fact). `FromPickleable` (via
+    # (unlike a namedtuple, whose `_fields` can be mutated after the fact). `FromPicklable` (via
     # `__setstate__`/`pickle`) must reject a crafted state pairing a PyStructSequence type with a
     # mismatched arity at load time, rather than build a corrupt treespec that later aborts (e.g. in
     # repr with an `InternalError`).
@@ -333,7 +333,7 @@ def test_treespec_setstate_rejects_structseq_field_arity_mismatch():
 
 def test_treespec_setstate_rejects_namedtuple_field_arity_mismatch():
     # A namedtuple's `_fields` can be mutated, so a crafted state can pair the type with an arity
-    # that no longer matches its field count. `FromPickleable` must reject it at load, rather than
+    # that no longer matches its field count. `FromPicklable` must reject it at load, rather than
     # build a corrupt spec (the repr guards the post-load mutation case separately).
     Point = namedtuple('Point', ('x', 'y'))  # noqa: PYI024
     state = optree.tree_structure(Point(1, 2)).__getstate__()  # arity 2
@@ -705,7 +705,7 @@ def test_treespec_setstate_rejects_malformed_state():
     # `PyTreeSpec.__setstate__` (used by `pickle`) must reject structurally malformed state rather
     # than build a corrupt spec that triggers out-of-bounds reads / crashes when later used. The
     # per-node tuple layout is (kind, arity, node_data, node_entries, custom, num_leaves, num_nodes,
-    # original_keys); see `PyTreeSpec::FromPickleable`.
+    # original_keys); see `PyTreeSpec::FromPicklable`.
     def setstate(state):
         obj = optree.PyTreeSpec.__new__(optree.PyTreeSpec)
         obj.__setstate__(state)

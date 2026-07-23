@@ -315,7 +315,7 @@ std::string PyTreeSpec::ToString() const {
     }
 }
 
-py::object PyTreeSpec::ToPickleable() const {
+py::object PyTreeSpec::ToPicklable() const {
     PYTREESPEC_SANITY_CHECK(*this);
 
     const py::tuple node_states{GetNumNodes()};
@@ -340,12 +340,12 @@ py::object PyTreeSpec::ToPickleable() const {
 
 // NOLINTBEGIN[cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers]
 // NOLINTNEXTLINE[readability-function-cognitive-complexity]
-/*static*/ std::unique_ptr<PyTreeSpec> PyTreeSpec::FromPickleable(const py::object &pickleable) {
+/*static*/ std::unique_ptr<PyTreeSpec> PyTreeSpec::FromPicklable(const py::object &picklable) {
     const auto malformed = [](const std::string &reason) -> std::runtime_error {
         return std::runtime_error("Malformed pickled PyTreeSpec: " + reason + ".");
     };
 
-    const auto state = thread_safe_cast<py::tuple>(pickleable);
+    const auto state = thread_safe_cast<py::tuple>(picklable);
     if (state.size() != 3) [[unlikely]] {
         throw malformed("the state is not a 3-tuple");
     }
