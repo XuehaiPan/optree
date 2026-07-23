@@ -408,3 +408,64 @@ def test_type_cache_cleanup_across_subinterpreters():
         output='',
         rerun=NUM_FLAKY_RERUNS,
     )
+
+
+def test_registry_lookup_no_gil_lock_order_deadlock():
+    # `Lookup`/`Register`/`Unregister` call `GetSingleton()` while holding `sm_mutex`. Under
+    # `per_interpreter_gil`, once any subinterpreter has imported `optree._C`, pybind11's
+    # `call_once_and_store_result` releases the GIL on every `GetSingleton()` call (its single-
+    # interpreter fast path is latched off process-wide). A flatten thread then drops the GIL while
+    # holding the `sm_mutex` read lock and parks re-acquiring it, while a concurrent registration
+    # thread holds the GIL and parks on the `sm_mutex` write lock: a GIL/`sm_mutex` lock-order
+    # inversion that hangs the whole process. A `faulthandler` watchdog turns the hang into a
+    # non-zero exit; the fixed code acquires the singleton before locking and exits cleanly.
+    check_script_in_subprocess(
+        f"""
+        import contextlib
+        import faulthandler
+        import threading
+        import time
+        from concurrent import interpreters
+
+        import optree
+
+        # Latch pybind11's `has_seen_non_main_interpreter` so `GetSingleton()` releases the GIL on
+        # every subsequent call (the single-interpreter fast path is disabled process-wide).
+        with contextlib.closing(interpreters.create()) as subinterpreter:
+            subinterpreter.exec('import optree._C')
+
+        faulthandler.dump_traceback_later(20, exit=True)  # a deadlock becomes a non-zero exit
+
+        stop = threading.Event()
+        tree = {{'a': 1, 'b': [2, 3], 'c': (4, 5)}}
+
+        def flatten_worker():
+            while not stop.is_set():
+                optree.tree_flatten(tree)
+
+        def register_worker(index):
+            cls = type(f'DeadlockNode_{{index}}', (), {{}})
+            while not stop.is_set():
+                optree.register_pytree_node(
+                    cls,
+                    lambda x: ((), None),
+                    lambda metadata, children: cls(),
+                    namespace='deadlock'
+                )
+                optree.unregister_pytree_node(cls, namespace='deadlock')
+
+        workers = [threading.Thread(target=flatten_worker) for _ in range({NUM_WORKERS})]
+        workers += [threading.Thread(target=register_worker, args=(index,)) for index in range(2)]
+        for worker in workers:
+            worker.start()
+        time.sleep(0.5)  # let readers and writers contend on `sm_mutex`
+        stop.set()
+        for worker in workers:
+            worker.join(timeout=5)
+            assert not worker.is_alive(), 'worker thread did not terminate (deadlock)'
+
+        faulthandler.cancel_dump_traceback_later()
+        """,
+        output=None,
+        rerun=NUM_FLAKY_RERUNS,
+    )

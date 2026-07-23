@@ -85,15 +85,12 @@ ssize_t PyTreeTypeRegistry::Size(const std::optional<std::string> &registry_name
     return SizeImpl(registry_namespace);
 }
 
-template <bool NoneIsLeaf>
-/*static*/ void PyTreeTypeRegistry::RegisterImpl(const py::object &cls,
-                                                 const py::function &flatten_func,
-                                                 const py::function &unflatten_func,
-                                                 const py::object &path_entry_type,
-                                                 const std::string &registry_namespace) {
-    auto &registry = GetSingleton<NoneIsLeaf>();
-
-    if (registry.m_builtins_types.find(cls) != registry.m_builtins_types.end()) [[unlikely]] {
+void PyTreeTypeRegistry::RegisterImpl(const py::object &cls,
+                                      const py::function &flatten_func,
+                                      const py::function &unflatten_func,
+                                      const py::object &path_entry_type,
+                                      const std::string &registry_namespace) {
+    if (m_builtins_types.find(cls) != m_builtins_types.end()) [[unlikely]] {
         throw py::value_error("PyTree type " + PyRepr(cls) +
                               " is a built-in type and cannot be re-registered.");
     }
@@ -105,12 +102,12 @@ template <bool NoneIsLeaf>
     registration->unflatten_func = py::reinterpret_borrow<py::function>(unflatten_func);
     registration->path_entry_type = py::reinterpret_borrow<py::object>(path_entry_type);
     if (registry_namespace.empty()) [[unlikely]] {
-        if (!registry.m_registrations.emplace(cls, std::move(registration)).second) [[unlikely]] {
+        if (!m_registrations.emplace(cls, std::move(registration)).second) [[unlikely]] {
             throw py::value_error("PyTree type " + PyRepr(cls) +
                                   " is already registered in the global namespace.");
         }
     } else [[likely]] {
-        if (!registry.m_named_registrations
+        if (!m_named_registrations
                  .emplace(std::make_pair(registry_namespace, cls), std::move(registration))
                  .second) [[unlikely]] {
             std::ostringstream oss{};
@@ -163,19 +160,26 @@ template <bool NoneIsLeaf>
         }
     }
 
+    // Acquire both singletons BEFORE `sm_mutex`, mirroring `Init`/`Clear`. Under
+    // `per_interpreter_gil`, `GetSingleton()` releases the GIL on every call once a subinterpreter
+    // has existed; doing that while holding `sm_mutex` inverts the GIL <-> `sm_mutex` lock order
+    // against a concurrent flatten (read lock) and deadlocks.
+    auto &registry1 = GetSingleton<NONE_IS_NODE>();
+    auto &registry2 = GetSingleton<NONE_IS_LEAF>();
+
     {
         const scoped_write_lock lock{sm_mutex};
 
-        RegisterImpl<NONE_IS_NODE>(cls,
-                                   flatten_func,
-                                   unflatten_func,
-                                   path_entry_type,
-                                   registry_namespace);
-        RegisterImpl<NONE_IS_LEAF>(cls,
-                                   flatten_func,
-                                   unflatten_func,
-                                   path_entry_type,
-                                   registry_namespace);
+        registry1.RegisterImpl(cls,
+                               flatten_func,
+                               unflatten_func,
+                               path_entry_type,
+                               registry_namespace);
+        registry2.RegisterImpl(cls,
+                               flatten_func,
+                               unflatten_func,
+                               path_entry_type,
+                               registry_namespace);
         cls.inc_ref();
         flatten_func.inc_ref();
         unflatten_func.inc_ref();
@@ -183,22 +187,19 @@ template <bool NoneIsLeaf>
     }
 }
 
-template <bool NoneIsLeaf>
-/*static*/ PyTreeTypeRegistry::RegistrationPtr PyTreeTypeRegistry::UnregisterImpl(
+PyTreeTypeRegistry::RegistrationPtr PyTreeTypeRegistry::UnregisterImpl(
     const py::object &cls,
     const std::string &registry_namespace,
     const bool &is_structsequence_class,
     const bool &is_namedtuple_class) {
-    auto &registry = GetSingleton<NoneIsLeaf>();
-
-    if (registry.m_builtins_types.find(cls) != registry.m_builtins_types.end()) [[unlikely]] {
+    if (m_builtins_types.find(cls) != m_builtins_types.end()) [[unlikely]] {
         throw py::value_error("PyTree type " + PyRepr(cls) +
                               " is a built-in type and cannot be unregistered.");
     }
 
     if (registry_namespace.empty()) [[unlikely]] {
-        const auto it = registry.m_registrations.find(cls);
-        if (it == registry.m_registrations.end()) [[unlikely]] {
+        const auto it = m_registrations.find(cls);
+        if (it == m_registrations.end()) [[unlikely]] {
             std::ostringstream oss{};
             oss << "PyTree type " << PyRepr(cls) << " ";
             if (is_structsequence_class) [[unlikely]] {
@@ -213,12 +214,11 @@ template <bool NoneIsLeaf>
             throw py::value_error(oss.str());
         }
         RegistrationPtr registration = it->second;
-        registry.m_registrations.erase(it);
+        m_registrations.erase(it);
         return registration;
     } else [[likely]] {
-        const auto named_it =
-            registry.m_named_registrations.find(std::make_pair(registry_namespace, cls));
-        if (named_it == registry.m_named_registrations.end()) [[unlikely]] {
+        const auto named_it = m_named_registrations.find(std::make_pair(registry_namespace, cls));
+        if (named_it == m_named_registrations.end()) [[unlikely]] {
             std::ostringstream oss{};
             oss << "PyTree type " << PyRepr(cls) << " ";
             if (is_structsequence_class) [[unlikely]] {
@@ -234,7 +234,7 @@ template <bool NoneIsLeaf>
             throw py::value_error(oss.str());
         }
         RegistrationPtr registration = named_it->second;
-        registry.m_named_registrations.erase(named_it);
+        m_named_registrations.erase(named_it);
         return registration;
     }
 }
@@ -249,17 +249,22 @@ template <bool NoneIsLeaf>
     const bool is_structsequence_class = IsStructSequenceClass(cls);
     const bool is_namedtuple_class = IsNamedTupleClass(cls);
 
+    // Acquire both singletons BEFORE `sm_mutex`, mirroring `Init`/`Clear` (see `Lookup`/`Register`
+    // for the lock-order rationale).
+    auto &registry1 = GetSingleton<NONE_IS_NODE>();
+    auto &registry2 = GetSingleton<NONE_IS_LEAF>();
+
     {
         const scoped_write_lock lock{sm_mutex};
 
-        const auto registration1 = UnregisterImpl<NONE_IS_NODE>(cls,
-                                                                registry_namespace,
-                                                                is_structsequence_class,
-                                                                is_namedtuple_class);
-        const auto registration2 = UnregisterImpl<NONE_IS_LEAF>(cls,
-                                                                registry_namespace,
-                                                                is_structsequence_class,
-                                                                is_namedtuple_class);
+        const auto registration1 = registry1.UnregisterImpl(cls,
+                                                            registry_namespace,
+                                                            is_structsequence_class,
+                                                            is_namedtuple_class);
+        const auto registration2 = registry2.UnregisterImpl(cls,
+                                                            registry_namespace,
+                                                            is_structsequence_class,
+                                                            is_namedtuple_class);
         EXPECT_TRUE(registration1->type.is(registration2->type));
         EXPECT_TRUE(registration1->flatten_func.is(registration2->flatten_func));
         EXPECT_TRUE(registration1->unflatten_func.is(registration2->unflatten_func));
@@ -275,18 +280,24 @@ template <bool NoneIsLeaf>
 /*static*/ PyTreeTypeRegistry::RegistrationPtr PyTreeTypeRegistry::Lookup(
     const py::object &cls,
     const std::string &registry_namespace) {
-    const scoped_read_lock lock{sm_mutex};
-
+    // Acquire the singleton BEFORE `sm_mutex`, mirroring `Init`/`Clear`. Under
+    // `per_interpreter_gil`, `GetSingleton()` releases the GIL on every call once a subinterpreter
+    // has existed; doing that while holding `sm_mutex` inverts the GIL <-> `sm_mutex` lock order
+    // against a concurrent registration (write lock) and deadlocks.
     const auto &registry = GetSingleton<NoneIsLeaf>();
-    if (!registry_namespace.empty()) [[unlikely]] {
-        const auto named_it =
-            registry.m_named_registrations.find(std::make_pair(registry_namespace, cls));
-        if (named_it != registry.m_named_registrations.end()) [[likely]] {
-            return named_it->second;
+
+    {
+        const scoped_read_lock lock{sm_mutex};
+        if (!registry_namespace.empty()) [[unlikely]] {
+            const auto named_it =
+                registry.m_named_registrations.find(std::make_pair(registry_namespace, cls));
+            if (named_it != registry.m_named_registrations.end()) [[likely]] {
+                return named_it->second;
+            }
         }
+        const auto it = registry.m_registrations.find(cls);
+        return it != registry.m_registrations.end() ? it->second : nullptr;
     }
-    const auto it = registry.m_registrations.find(cls);
-    return it != registry.m_registrations.end() ? it->second : nullptr;
 }
 
 template PyTreeTypeRegistry::RegistrationPtr PyTreeTypeRegistry::Lookup<NONE_IS_NODE>(

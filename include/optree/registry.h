@@ -231,18 +231,16 @@ private:
     template <bool NoneIsLeaf>
     [[nodiscard]] static PyTreeTypeRegistry &GetSingleton();
 
-    template <bool NoneIsLeaf>
-    static void RegisterImpl(const py::object &cls,
-                             const py::function &flatten_func,
-                             const py::function &unflatten_func,
-                             const py::object &path_entry_type,
-                             const std::string &registry_namespace);
+    void RegisterImpl(const py::object &cls,
+                      const py::function &flatten_func,
+                      const py::function &unflatten_func,
+                      const py::object &path_entry_type,
+                      const std::string &registry_namespace);
 
-    template <bool NoneIsLeaf>
-    [[nodiscard]] static RegistrationPtr UnregisterImpl(const py::object &cls,
-                                                        const std::string &registry_namespace,
-                                                        const bool &is_structsequence_class,
-                                                        const bool &is_namedtuple_class);
+    [[nodiscard]] RegistrationPtr UnregisterImpl(const py::object &cls,
+                                                 const std::string &registry_namespace,
+                                                 const bool &is_structsequence_class,
+                                                 const bool &is_namedtuple_class);
 
     // Get the number of registered types without locking. The caller must hold `sm_mutex`.
     [[nodiscard]] ssize_t SizeImpl(const std::optional<std::string> &registry_namespace) const;
