@@ -406,6 +406,7 @@ inline bool IsNamedTupleClass(const py::handle &type) {
         return false;
     }
 
+    // NOLINTNEXTLINE[cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers]
     static WeakKeyCache<bool> cache{4096};
     return cache.LookupOrInsert(type, [&type]() -> bool {
         return EVALUATE_WITH_LOCK_HELD(IsNamedTupleClassImpl(type), type);
@@ -487,6 +488,7 @@ inline bool IsStructSequenceClass(const py::handle &type) {
         return false;
     }
 
+    // NOLINTNEXTLINE[cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers]
     static WeakKeyCache<bool> cache{4096};
     return cache.LookupOrInsert(type, [&type]() -> bool {
         return EVALUATE_WITH_LOCK_HELD(IsStructSequenceClassImpl(type), type);
@@ -547,6 +549,7 @@ inline py::tuple StructSequenceGetFieldsImpl(const py::handle &type) {
     auto named = reserved_vector<bool>(n_sequence_fields);
     named.resize(n_sequence_fields, false);
     for (const PyMemberDef *member = members; member != nullptr && member->name != nullptr;
+         // NOLINTNEXTLINE[cppcoreguidelines-pro-bounds-pointer-arithmetic]
          ++member) {
         const py::ssize_t index =
             (member->offset - py::ssize_t_cast(offsetof(PyTupleObject, ob_item))) /
@@ -579,6 +582,7 @@ inline py::tuple StructSequenceGetFields(const py::handle &object) {
         }
     }
 
+    // NOLINTNEXTLINE[cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers]
     static WeakKeyCache<py::tuple> cache{4096};
     return cache.LookupOrInsert(type, [&type]() -> py::tuple {
         return EVALUATE_WITH_LOCK_HELD(StructSequenceGetFieldsImpl(type), type);
