@@ -28,10 +28,10 @@ limitations under the License.
 #include <vector>         // std::vector
 
 #include <Python.h>
-
 #if PY_VERSION_HEX < 0x030C00F0  // Python 3.12.0
 #    include <structmember.h>    // PyMemberDef
 #endif
+#include <structseq.h>  // PyStructSequence_UnnamedField
 
 #include <pybind11/eval.h>  // pybind11::exec
 #include <pybind11/pybind11.h>
