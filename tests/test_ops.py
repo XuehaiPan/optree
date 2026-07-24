@@ -3120,6 +3120,99 @@ def test_tree_broadcast_common():
     )
 
 
+def test_tree_broadcast_common_does_not_apply_is_leaf_to_internal_sentinel():
+    # `tree_broadcast_common` fills an internal `common_suffix_tree` with a private `object()`
+    # sentinel, then replicates each leaf across the matching subtree. The user's `is_leaf` must run
+    # only on values from the input trees, never the sentinel: a value-dependent predicate would
+    # otherwise mis-structure the placeholder subtree or crash while inspecting it.
+
+    # Collapses a list unless every element is an int. When the predicate keeps the other's list
+    # (all ints), the fix must not re-apply the predicate to the sentinel subtree, which would
+    # collapse `[<obj>, <obj>]` and under-replicate. When the predicate collapses the real other
+    # tree to a leaf (a list holding a tuple), there is simply nothing to broadcast and the inputs
+    # pass through unchanged.
+    def collapse_non_int_lists(x):
+        return isinstance(x, list) and not all(isinstance(e, int) for e in x)
+
+    assert optree.tree_broadcast_common(
+        1,
+        [2, 3],
+        is_leaf=collapse_non_int_lists,
+    ) == ([1, 1], [2, 3])
+    assert optree.tree_broadcast_common(
+        1,
+        [2, (3, 4)],
+        is_leaf=collapse_non_int_lists,
+    ) == (1, [2, (3, 4)])
+    assert optree.tree_broadcast_common(
+        {'a': 1},
+        {'a': [2, 3]},
+        is_leaf=collapse_non_int_lists,
+    ) == ({'a': [1, 1]}, {'a': [2, 3]})
+    assert optree.tree_broadcast_common(
+        {'a': 1},
+        {'a': [2, (3, 4)]},
+        is_leaf=collapse_non_int_lists,
+    ) == ({'a': 1}, {'a': [2, (3, 4)]})
+
+    # Inspects the value; must not crash on the sentinel (`object() < 0` raises `TypeError`),
+    # regardless of the container (list, tuple, nested) the sentinel subtree takes.
+    def negative_scalar(x):
+        return not isinstance(x, (list, tuple, dict)) and x < 0
+
+    assert optree.tree_broadcast_common(
+        1,
+        [2, 3],
+        is_leaf=negative_scalar,
+    ) == ([1, 1], [2, 3])
+    assert optree.tree_broadcast_common(
+        [1],
+        [(2, 3)],
+        is_leaf=negative_scalar,
+    ) == ([(1, 1)], [(2, 3)])
+    assert optree.tree_broadcast_common(
+        [1, 1],
+        [[2], [3, 4]],
+        is_leaf=negative_scalar,
+    ) == ([[1], [1, 1]], [[2], [3, 4]])
+    # `broadcast_common` delegates to `tree_broadcast_common`, so it must not crash either.
+    assert optree.broadcast_common(1, [2, 3], is_leaf=negative_scalar) == ([1, 1], [2, 3])
+
+
+def test_tree_broadcast_common_value_dependent_is_leaf_is_lossy():
+    # Characterization, separate from the R18 sentinel fix: a `is_leaf` that classifies by leaf
+    # *value* rather than type/structure can be lossy under broadcasting. `is_shape_like` treats a
+    # tuple of ints as one leaf, so broadcasting the scalar `5` into a two-slot yields `(5, 5)`,
+    # which the predicate re-reads as a single shape. Such a result still shares the literal
+    # common-suffix structure, but re-flattens to a different leaf count under the predicate. The
+    # cases below show it is lossy for a number yet faithful for a shape or a list slot. This pins
+    # the known limitation; prefer type/structure predicates for broadcasting.
+    def is_shape_like(x):
+        return type(x) is tuple and all(isinstance(v, int) for v in x)
+
+    # A tuple slot is lossy: `(5, 5)` re-reads as a shape leaf.
+    assert optree.tree_broadcast_common(
+        [5],
+        [(1, 'x')],
+        is_leaf=is_shape_like,
+    ) == ([(5, 5)], [(1, 'x')])
+    # A list slot is not: `[5, 5]` is not a shape tuple, so it stays consistent.
+    assert optree.tree_broadcast_common(
+        [5],
+        [[1, 2]],
+        is_leaf=is_shape_like,
+    ) == ([[5, 5]], [[1, 2]])
+
+    # A mixed tree shows both outcomes at once. The shape `(5, 5)` broadcast into a two-slot becomes
+    # `((5, 5), (5, 5))`, two shape leaves, faithful; the number `3` broadcast the same way becomes
+    # `(3, 3)`, which the predicate re-reads as one shape leaf, lossy.
+    assert optree.tree_broadcast_common(
+        [(5, 5), (1.0, 2)],
+        [(2, 'x'), 3],
+        is_leaf=is_shape_like,
+    ) == ([((5, 5), (5, 5)), (1.0, 2)], [(2, 'x'), (3, 3)])
+
+
 def test_broadcast_common():
     assert optree.broadcast_common(1, [2, 3, 4]) == ([1, 1, 1], [2, 3, 4])
     assert optree.broadcast_common([1, 2, 3], [4, 5, 6]) == ([1, 2, 3], [4, 5, 6])

@@ -1727,6 +1727,13 @@ def tree_broadcast_common(
     ``other_tree``. The number of replicas is determined by the corresponding subtree in the suffix
     structure.
 
+    .. note::
+        If ``is_leaf`` classifies nodes by their leaf **value** rather than by type or structure
+        (e.g., treating an integer tuple as a leaf), broadcasting may replicate a value into a slot
+        whose filled form the predicate then re-classifies, yielding two trees that re-flatten to
+        different structures under the same ``is_leaf``. Prefer type- or structure-based predicates
+        when broadcasting.
+
     >>> tree_broadcast_common(1, [2, 3, 4])
     ([1, 1, 1], [2, 3, 4])
     >>> tree_broadcast_common([1, 2, 3], [4, 5, 6])
@@ -1775,9 +1782,13 @@ def tree_broadcast_common(
     )
 
     def broadcast_leaves(x: T, subtree: PyTree[T]) -> PyTree[T]:
+        # `subtree` is a slice of `common_suffix_tree`, whose leaves are the private `sentinel`
+        # placeholder rather than real input values. Do not run the user's `is_leaf` on it: the
+        # subtree structure is already fixed by `common_suffix_treespec`, and `is_leaf` may crash or
+        # wrongly collapse them. Flatten fully to count how many replicas of `x` are needed.
         subtreespec = tree_structure(
             subtree,
-            is_leaf=is_leaf,
+            is_leaf=None,
             none_is_leaf=none_is_leaf,
             namespace=namespace,
         )
@@ -1820,6 +1831,13 @@ def broadcast_common(
     suffix structure of ``tree`` and ``other_tree``. The leaves are replicated from ``tree`` and
     ``other_tree``. The number of replicas is determined by the corresponding subtree in the suffix
     structure.
+
+    .. note::
+        If ``is_leaf`` classifies nodes by their leaf **value** rather than by type or structure
+        (e.g., treating an integer tuple as a leaf), broadcasting may replicate a value into a slot
+        whose filled form the predicate then re-classifies, yielding two trees that re-flatten to
+        different structures under the same ``is_leaf``. Prefer type- or structure-based predicates
+        when broadcasting.
 
     >>> broadcast_common(1, [2, 3, 4])
     ([1, 1, 1], [2, 3, 4])
