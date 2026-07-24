@@ -215,24 +215,27 @@ inline Py_ALWAYS_INLINE void AssertExactDeque(const py::handle &object) {
     }
 }
 
-// A process-global cache keyed by a weakly-referenceable Python object (in practice a type),
-// mapping it to a value computed from that key (e.g. whether a type is a namedtuple, or its
-// PyStructSequence field names). The cache is a function-local static shared by every interpreter
-// and outlives the Python runtime.
+// A process-global cache mapping a Python object (in practice a type) to a value computed from it
+// (e.g. whether a type is a namedtuple, or its PyStructSequence field names). The cache is a
+// function-local static shared by every interpreter and outlives the Python runtime.
 //
-// Correctness comes from the per-entry weakref callback: when a key is garbage-collected its entry
-// is evicted, so a later key that reuses the freed address cannot read a stale value. This covers
-// every reachable case on its own.
+// Entries are keyed by a `(interpreter_id, object address)` pair, not the address alone, to handle
+// a shared key that maps to a per-interpreter-owned result. The object address can be shared across
+// interpreters (the `int` class, for example, is immortal and lives at the same address in every
+// interpreter), while a reference value (e.g. a `py::tuple` of field names) is owned by the
+// interpreter that computed it. An address-only key would hand that value to another interpreter,
+// which could use it after the owner frees it on finalization; the interpreter id prevents that.
 //
-// As defense-in-depth, each entry also records the interpreter that inserted it, and a
-// per-interpreter `atexit` callback clears that interpreter's entries on shutdown. This guards the
-// one path the weakref cannot: interpreter finalization is not guaranteed to run weakref callbacks,
-// and interpreter ids restart from 0 after a `Py_Finalize`/`Py_Initialize` cycle, so an entry left
-// by a finalized interpreter could be read by a later one that reuses a freed key address.
-// Unlike a weakref callback, `atexit` runs early in every normal finalization, so it reliably
-// clears this interpreter's entries; the paths that skip it (a crash, `os._exit`, or an embedder
-// that never finalizes) also preclude any later in-process reuse, so no surviving interpreter
-// reads a stale entry. It is purely defensive; no reachable code path depends on it.
+// Stale reads within an interpreter are prevented by the per-entry weakref callback: when a key is
+// garbage-collected its entry is evicted, so a later key that reuses the freed address (in the same
+// interpreter) cannot read a stale value.
+//
+// A per-interpreter `atexit` callback clears an interpreter's entries on its shutdown. This covers
+// two paths the weakref cannot: an immortal shared key (e.g. `int`) is never collected, so its
+// per-interpreter entries would otherwise leak; and interpreter ids restart from 0 after a
+// `Py_Finalize`/`Py_Initialize` cycle, so a fresh interpreter must not inherit a finalized one's
+// `(0, addr)` entries. `atexit` runs early in every normal finalization; the paths that skip it (a
+// crash, `os._exit`, or an embedder that never finalizes) end the process with no further reuse.
 //
 // `ValueType` may be a value (e.g. `bool`) or a pybind11 reference (a `py::object` subclass such as
 // `py::tuple`, or a `py::handle`): a reference entry owns one reference that is dropped on
@@ -254,15 +257,19 @@ public:
     // cache lock NOT held.
     template <typename Compute>
     [[nodiscard]] ValueType LookupOrInsert(const py::handle &key, Compute &&compute) {
+        // Read the interpreter id (part of the cache key) while the GIL is still held, before the
+        // read lock below releases it: `GetCurrentPyInterpreterID()` needs a valid thread state.
+        const interpid_t interpreter_id = GetCurrentPyInterpreterID();
+        const CacheKey cache_key{interpreter_id, key};
         std::optional<StoredType> cached_value{};
         {
 #if !defined(Py_GIL_DISABLED)
             const py::gil_scoped_release_simple gil_release{};
 #endif
             const scoped_read_lock lock{m_mutex};
-            const auto it = m_cache.find(key);
+            const auto it = m_cache.find(cache_key);
             if (it != m_cache.end()) [[likely]] {
-                cached_value = it->second.value;
+                cached_value = it->second;
             }
         }
         // The read lock is released and the GIL re-acquired (in that destruction order) BEFORE the
@@ -280,7 +287,6 @@ public:
             }
         }
 
-        const interpid_t interpreter_id = GetCurrentPyInterpreterID();
         ValueType value = std::forward<Compute>(compute)();
         bool inserted = false;
         bool register_cleanup = false;
@@ -293,7 +299,7 @@ public:
                 // The GIL is released here, so store the value without touching any refcount (a
                 // reference value is stored as a borrowed `py::handle` and owned by the `inc_ref()`
                 // below).
-                inserted = m_cache.emplace(key, Entry{interpreter_id, StoredType{value}}).second;
+                inserted = m_cache.emplace(cache_key, StoredType{value}).second;
             }
             register_cleanup = m_registered_interpids.insert(interpreter_id).second;
         }
@@ -307,12 +313,13 @@ public:
                 if constexpr (kValueIsPyReference) {
                     value.inc_ref();
                 }
-                (void)py::weakref(key, py::cpp_function([this, key](py::handle weakref) -> void {
+                (void)py::weakref(key,
+                                  py::cpp_function([this, cache_key](py::handle weakref) -> void {
                                       const scoped_write_lock lock{m_mutex};
-                                      const auto it = m_cache.find(key);
+                                      const auto it = m_cache.find(cache_key);
                                       if (it != m_cache.end()) [[likely]] {
                                           if constexpr (kValueIsPyReference) {
-                                              it->second.value.dec_ref();
+                                              it->second.dec_ref();
                                           }
                                           m_cache.erase(it);
                                       }
@@ -327,13 +334,7 @@ public:
 private:
     static constexpr bool kValueIsPyReference = std::is_base_of_v<py::handle, ValueType>;
     using StoredType = std::conditional_t<kValueIsPyReference, py::handle, ValueType>;
-
-    // Each entry records the id of the interpreter that inserted it, so the per-interpreter
-    // `atexit` cleanup dec-refs and erases only its own entries (under its own GIL).
-    struct Entry {
-        interpid_t interpreter_id;
-        StoredType value;
-    };
+    using CacheKey = std::pair<interpid_t, py::handle>;
 
     // Register (once per interpreter, with the GIL held and WITHOUT the cache lock, mirroring
     // `PyTreeTypeRegistry::Init`) an `atexit` callback that evicts this interpreter's entries on
@@ -343,9 +344,9 @@ private:
         atexit_register(py::cpp_function([this, interpreter_id]() -> void {
             const scoped_write_lock lock{m_mutex};
             for (auto it = m_cache.begin(); it != m_cache.end();) {
-                if (it->second.interpreter_id == interpreter_id) [[likely]] {
+                if (it->first.first == interpreter_id) [[likely]] {
                     if constexpr (kValueIsPyReference) {
-                        it->second.value.dec_ref();
+                        it->second.dec_ref();
                     }
                     it = m_cache.erase(it);
                 } else {
@@ -356,7 +357,7 @@ private:
         }));
     }
 
-    std::unordered_map<py::handle, Entry> m_cache{};
+    std::unordered_map<CacheKey, StoredType> m_cache{};
     std::unordered_set<interpid_t> m_registered_interpids{};
     const std::size_t m_max_size{};
     mutable read_write_mutex m_mutex{};

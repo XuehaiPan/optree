@@ -89,6 +89,26 @@ struct std::not_equal_to<std::pair<std::string, py::handle>> {
                std::not_equal_to<py::handle>{}(lhs.second, rhs.second);
     }
 };
+template <>
+struct std::equal_to<std::pair<interpid_t, py::handle>> {
+    using is_transparent = void;
+    inline constexpr Py_ALWAYS_INLINE bool operator()(const std::pair<interpid_t, py::handle> &lhs,
+                                                      const std::pair<interpid_t, py::handle> &rhs)
+        const noexcept(noexcept(std::equal_to<interpid_t>{}(lhs.first, rhs.first))) {
+        return std::equal_to<interpid_t>{}(lhs.first, rhs.first) &&
+               std::equal_to<py::handle>{}(lhs.second, rhs.second);
+    }
+};
+template <>
+struct std::not_equal_to<std::pair<interpid_t, py::handle>> {
+    using is_transparent = void;
+    inline constexpr Py_ALWAYS_INLINE bool operator()(const std::pair<interpid_t, py::handle> &lhs,
+                                                      const std::pair<interpid_t, py::handle> &rhs)
+        const noexcept(noexcept(std::not_equal_to<interpid_t>{}(lhs.first, rhs.first))) {
+        return std::not_equal_to<interpid_t>{}(lhs.first, rhs.first) ||
+               std::not_equal_to<py::handle>{}(lhs.second, rhs.second);
+    }
+};
 template <class T, class U>
 struct std::hash<std::pair<T, U>> {
     using is_transparent = void;
