@@ -932,6 +932,25 @@ def test_register_existing_class_with_metadata():
     assert obj == optree.tree_unflatten(treespec, leaves)
 
 
+def test_dataclass_post_init_rewriting_a_field_does_not_round_trip():
+    # Characterization: the generated unflatten rebuilds via `cls(**fields)`, re-running `__init__`
+    # and `__post_init__`. A `__post_init__` that only derives non-field state round-trips (see
+    # `test_register_existing_class_with_metadata` above), but one that rewrites a stored field does
+    # not: flatten reads the rewritten value and unflatten rewrites it again. Such a class should
+    # register explicitly with custom flatten/unflatten (see `register_node`).
+    @optree.dataclasses.dataclass(namespace='test-dc-post-init-rewrite')
+    class Shift:
+        x: int
+
+        def __post_init__(self):
+            self.x = self.x + 1
+
+    obj = Shift(5)  # __post_init__: x = 5 + 1 = 6
+    leaves, treespec = optree.tree_flatten(obj, namespace='test-dc-post-init-rewrite')
+    assert leaves == [6]
+    assert optree.tree_unflatten(treespec, leaves).x == 7  # re-applied: 6 + 1 = 7, not 6
+
+
 def test_register_non_class():
     with pytest.raises(TypeError, match='Expected a class'):
         optree.dataclasses.register_node(42, namespace='error')

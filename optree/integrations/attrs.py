@@ -245,6 +245,9 @@ def define(  # pylint: disable=function-redefined
 
     This is a wrapper around :func:`attrs.define` that also registers the class as a pytree node.
 
+    See also :func:`register_node` for how instances are reconstructed and when a class needs an
+    explicit registration with custom flatten/unflatten functions instead.
+
     Args:
         cls (type or None, optional): The class to decorate. If :data:`None`, return a decorator.
         namespace (str): The registry namespace used for the PyTree registration.
@@ -377,6 +380,15 @@ def register_node(  # noqa: C901 # pylint: disable=function-redefined,too-many-b
     Fields with ``metadata['pytree_node']`` set to :data:`True` (or not set, defaulting to
     :data:`True`) are treated as children, while init fields with ``metadata['pytree_node']`` set
     to :data:`False` are treated as metadata.
+
+    .. note::
+        These generated functions cover the straightforward case where a class merely stores its
+        fields. Instances are rebuilt with ``cls(**fields)``, which re-runs the attrs-generated
+        ``__init__`` and hence its field converters, validation, and ``__attrs_post_init__``. The
+        :func:`tree_unflatten` round-trip is exact only when ``__init__`` returns each field value
+        unchanged from what it is given. Register a class that needs any other reconstruction
+        behavior explicitly with :func:`optree.register_pytree_node` or
+        :func:`optree.register_pytree_node_class` using custom flatten/unflatten functions.
 
     Usage::
 

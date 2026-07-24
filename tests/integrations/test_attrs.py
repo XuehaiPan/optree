@@ -97,6 +97,33 @@ def test_define_with_mixed_fields():
     assert foo == optree.tree_unflatten(treespec, leaves)
 
 
+def test_define_reconstruction_reapplies_field_converters():
+    # Characterization: the generated unflatten rebuilds via `cls(**fields)`, which re-runs attrs
+    # field converters. Since `flatten` reads the already-converted value, an idempotent converter
+    # round-trips exactly while a non-idempotent one does not. A class needing exact reconstruction
+    # should register explicitly with custom flatten/unflatten (see `register_node`).
+
+    # Idempotent converter: `int(int(x)) == int(x)`, so the round-trip is exact.
+    @optree.integrations.attrs.define(namespace='test-attrs-converter-idempotent')
+    class Cast:
+        x: int = optree.integrations.attrs.field(converter=int)
+
+    cast = Cast(5.0)  # __init__ converter: x = int(5.0) = 5
+    leaves, treespec = optree.tree_flatten(cast, namespace='test-attrs-converter-idempotent')
+    assert leaves == [5]
+    assert optree.tree_unflatten(treespec, leaves).x == 5
+
+    # Non-idempotent converter: unflatten re-applies it, so the stored `6` becomes `7`.
+    @optree.integrations.attrs.define(namespace='test-attrs-converter-shift')
+    class Shift:
+        x: int = optree.integrations.attrs.field(converter=lambda v: v + 1)
+
+    shift = Shift(5)  # __init__ converter: x = 5 + 1 = 6
+    leaves, treespec = optree.tree_flatten(shift, namespace='test-attrs-converter-shift')
+    assert leaves == [6]
+    assert optree.tree_unflatten(treespec, leaves).x == 7  # re-applied: 6 + 1 = 7, not 6
+
+
 def test_define_frozen():
     @optree.integrations.attrs.frozen(namespace='test-attrs-frozen')
     class FrozenPoint:
