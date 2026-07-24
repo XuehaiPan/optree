@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>  // std::copy
 #include <iterator>   // std::back_inserter
 #include <memory>     // std::unique_ptr, std::make_unique
-#include <optional>   // std::optional
 #include <sstream>    // std::ostringstream
 #include <stdexcept>  // std::runtime_error
 #include <string>     // std::string

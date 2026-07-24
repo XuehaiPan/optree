@@ -136,11 +136,11 @@ def test_treespec_equal_hash():
 
 
 def test_treespec_equal_hash_with_namespace():
-    # `optree.functools.partial` is registered in the global namespace, so it is recognized
-    # under any namespace. Flattening the same object with and without an explicit namespace
-    # yields structurally identical treespecs that compare equal, because an empty namespace is
-    # treated as a wildcard compatible with any namespace (see `PyTreeSpec::EqualTo`). Equal
-    # treespecs MUST hash equally, otherwise hash-based containers (`dict` / `set`) break.
+    # `optree.functools.partial` is registered in the global namespace, so it is recognized under
+    # any namespace. Flattening the same object with and without an explicit namespace yields
+    # structurally identical treespecs that compare equal, because an empty namespace is treated as
+    # a wildcard compatible with any namespace (see `PyTreeSpec::EqualTo`). Equal treespecs MUST
+    # hash equally, otherwise hash-based containers (`dict` / `set`) break.
     obj = optree.functools.partial(int, base=2)
 
     treespec_no_namespace = optree.tree_structure(obj)
