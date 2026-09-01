@@ -29,7 +29,7 @@ limitations under the License.
 namespace optree {
 
 template <bool NoneIsLeaf, bool DictShouldBeSorted, typename LeafVector>
-// NOLINTNEXTLINE[readability-function-cognitive-complexity]
+// NOLINTNEXTLINE(misc-no-recursion,readability-function-cognitive-complexity)
 bool PyTreeSpec::FlattenIntoImpl(const py::handle &handle,
                                  LeafVector &leaves,
                                  const ssize_t &depth,
@@ -55,7 +55,7 @@ bool PyTreeSpec::FlattenIntoImpl(const py::handle &handle,
         node.kind =
             PyTreeTypeRegistry::GetKind<NoneIsLeaf>(handle, node.custom, registry_namespace);
         const auto recurse =
-            // NOLINTNEXTLINE[misc-no-recursion]
+            // NOLINTNEXTLINE(misc-no-recursion)
             [this, &found_custom, &leaf_predicate, &registry_namespace, &leaves, &depth](
                 const py::handle &child) -> void {
             found_custom |= FlattenIntoImpl<NoneIsLeaf, DictShouldBeSorted>(child,
@@ -163,7 +163,7 @@ bool PyTreeSpec::FlattenIntoImpl(const py::handle &handle,
                 node.arity = 0;
                 node.node_data = TupleGetItem(out, 1);
                 {
-                    auto children = thread_safe_cast<py::iterable>(TupleGetItem(out, 0));
+                    const auto children = thread_safe_cast<py::iterable>(TupleGetItem(out, 0));
                     const scoped_critical_section cs{children};
                     for (const py::handle &child : children) {
                         ++node.arity;
@@ -269,7 +269,7 @@ template <bool NoneIsLeaf,
           typename LeafVector,
           typename PathVector,
           typename Stack>
-// NOLINTNEXTLINE[readability-function-cognitive-complexity]
+// NOLINTNEXTLINE(misc-no-recursion,readability-function-cognitive-complexity)
 bool PyTreeSpec::FlattenIntoWithPathImpl(const py::handle &handle,
                                          LeafVector &leaves,
                                          PathVector &paths,
@@ -301,7 +301,7 @@ bool PyTreeSpec::FlattenIntoWithPathImpl(const py::handle &handle,
     } else [[likely]] {
         node.kind =
             PyTreeTypeRegistry::GetKind<NoneIsLeaf>(handle, node.custom, registry_namespace);
-        // NOLINTNEXTLINE[misc-no-recursion]
+        // NOLINTNEXTLINE(misc-no-recursion)
         const auto recurse = [this,
                               &found_custom,
                               &leaf_predicate,
@@ -427,7 +427,7 @@ bool PyTreeSpec::FlattenIntoWithPathImpl(const py::handle &handle,
                     node_entries = py::none();
                 }
                 if (node_entries.is_none()) [[unlikely]] {
-                    auto children = thread_safe_cast<py::iterable>(TupleGetItem(out, 0));
+                    const auto children = thread_safe_cast<py::iterable>(TupleGetItem(out, 0));
                     const scoped_critical_section cs{children};
                     for (const py::handle &child : children) {
                         recurse(child, py::int_(node.arity++));
@@ -436,7 +436,7 @@ bool PyTreeSpec::FlattenIntoWithPathImpl(const py::handle &handle,
                     node.node_entries = thread_safe_cast<py::tuple>(node_entries);
                     node.arity = TupleGetSize(node.node_entries);
                     ssize_t num_children = 0;
-                    auto children = thread_safe_cast<py::iterable>(TupleGetItem(out, 0));
+                    const auto children = thread_safe_cast<py::iterable>(TupleGetItem(out, 0));
                     const scoped_critical_section cs{children};
                     for (const py::handle &child : children) {
                         if (num_children >= node.arity) [[unlikely]] {
@@ -550,7 +550,7 @@ PyTreeSpec::FlattenWithPath(const py::object &tree,
     return std::make_tuple(std::move(paths), std::move(leaves), std::move(treespec));
 }
 
-// NOLINTNEXTLINE[readability-function-cognitive-complexity]
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 py::list PyTreeSpec::FlattenUpTo(const py::object &tree) const {
     PYTREESPEC_SANITY_CHECK(*this);
 
@@ -771,7 +771,7 @@ py::list PyTreeSpec::FlattenUpTo(const py::object &tree) const {
                 }
                 ssize_t arity = 0;
                 {
-                    auto children = thread_safe_cast<py::iterable>(TupleGetItem(out, 0));
+                    const auto children = thread_safe_cast<py::iterable>(TupleGetItem(out, 0));
                     const scoped_critical_section cs{children};
                     for (const py::handle &child : children) {
                         ++arity;
@@ -827,9 +827,8 @@ bool IsLeaf(const py::object &object,
             const std::string &registry_namespace) {
     if (none_is_leaf) [[unlikely]] {
         return IsLeafImpl<NONE_IS_LEAF>(object, leaf_predicate, registry_namespace);
-    } else [[likely]] {
-        return IsLeafImpl<NONE_IS_NODE>(object, leaf_predicate, registry_namespace);
     }
+    return IsLeafImpl<NONE_IS_NODE>(object, leaf_predicate, registry_namespace);
 }
 
 }  // namespace optree

@@ -297,7 +297,7 @@ public:
     // `compute` is a nullary callable returning `ValueType`, invoked with the GIL held and the
     // cache lock NOT held.
     template <typename Compute>
-    // NOLINTNEXTLINE[readability-function-cognitive-complexity]
+    // NOLINTNEXTLINE(readability-function-cognitive-complexity)
     [[nodiscard]] ValueType LookupOrInsert(const py::handle &key, Compute &&compute) {
         // Read the interpreter id (part of the cache key) while the GIL is still held, before the
         // read lock below releases it: `GetCurrentPyInterpreterID()` needs a valid thread state.
@@ -422,7 +422,7 @@ private:
     // `PyTreeTypeRegistry::Init`) an `atexit` callback that evicts this interpreter's entries on
     // shutdown.
     void RegisterInterpreterCleanup(const interpid_t &interpreter_id) {
-        auto atexit_register = py::getattr(py::module_::import("atexit"), "register");
+        const auto atexit_register = py::getattr(py::module_::import("atexit"), "register");
         atexit_register(py::cpp_function([this, interpreter_id]() -> void {
             const scoped_write_lock lock{m_mutex};
             for (auto it = m_cache.begin(); it != m_cache.end();) {
@@ -450,7 +450,7 @@ private:
 // The maximum size of a type cache.
 constexpr std::size_t MAX_TYPE_CACHE_SIZE = 4096;
 
-// NOLINTNEXTLINE[readability-function-cognitive-complexity]
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] inline bool IsNamedTupleClassImpl(const py::handle &type) {
     // We can only identify namedtuples heuristically, here by the presence of a _fields attribute.
     if (PyType_FastSubclass(reinterpret_cast<PyTypeObject *>(type.ptr()),
@@ -467,7 +467,7 @@ constexpr std::size_t MAX_TYPE_CACHE_SIZE = 4096;
             }
             Py_DECREF(_fields);
             if (fields_ok) [[likely]] {
-                // NOLINTNEXTLINE[readability-use-anyofallof]
+                // NOLINTNEXTLINE(readability-use-anyofallof)
                 for (const char * const name : {"_make", "_asdict"}) {
                     if (PyObject * const attr = PyObject_GetAttrString(type.ptr(), name))
                         [[likely]] {
@@ -540,7 +540,6 @@ inline Py_ALWAYS_INLINE void AssertExactNamedTuple(const py::handle &object) {
         PyTuple_GET_SIZE(type_object->tp_bases) == 1 &&
         PyTuple_GET_ITEM(type_object->tp_bases, 0) == reinterpret_cast<PyObject *>(&PyTuple_Type))
         [[unlikely]] {
-        // NOLINTNEXTLINE[readability-use-anyofallof]
         for (const char * const name : {"n_fields", "n_sequence_fields", "n_unnamed_fields"}) {
             if (PyObject * const attr = PyObject_GetAttrString(type.ptr(), name)) [[unlikely]] {
                 const bool result = static_cast<bool>(PyLong_CheckExact(attr));
@@ -631,7 +630,7 @@ inline Py_ALWAYS_INLINE void AssertExactStructSequence(const py::handle &object)
     // replaces.
     std::vector<bool> named(n_sequence_fields, false);
     for (const PyMemberDef *member = members; member != nullptr && member->name != nullptr;
-         // NOLINTNEXTLINE[cppcoreguidelines-pro-bounds-pointer-arithmetic]
+         // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
          ++member) {
         const py::ssize_t index =
             (member->offset - py::ssize_t_cast(offsetof(PyTupleObject, ob_item))) /
@@ -672,7 +671,7 @@ inline Py_ALWAYS_INLINE void AssertExactStructSequence(const py::handle &object)
 
 // `list.sort()` leaves the list partially reordered when a comparison raises, so each attempt sorts
 // a copy and only a fully sorted one is committed (mirrors `optree.utils.total_order_sorted`).
-inline void TotalOrderSort(py::list &list) {  // NOLINT[runtime/references]
+inline void TotalOrderSort(py::list &list) {
     py::list sorted = ListCopy(list);
     try {
         // Sort directly if possible.
@@ -726,7 +725,7 @@ inline void TotalOrderSort(py::list &list) {  // NOLINT[runtime/references]
 // `dict_dict_fromkeys` fast path (contiguous bucket copy, no per-key rehash).
 [[nodiscard]] inline Py_ALWAYS_INLINE py::dict DictFromKeys(const py::handle &iterable) {
     const scoped_critical_section cs{iterable};
-    // NOLINTNEXTLINE[cppcoreguidelines-pro-type-vararg]
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,hicpp-vararg)
     PyObject *result = PyObject_CallMethod(reinterpret_cast<PyObject *>(&PyDict_Type),
                                            "fromkeys",
                                            "O",
