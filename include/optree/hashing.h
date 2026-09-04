@@ -17,12 +17,12 @@ limitations under the License.
 
 #pragma once
 
+#include <Python.h>
+
 #include <cstddef>     // std::size_t
 #include <functional>  // std::hash, std::{not_,}equal_to
 #include <string>      // std::string
 #include <utility>     // std::pair
-
-#include <Python.h>
 
 #include <pybind11/pybind11.h>
 

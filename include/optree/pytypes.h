@@ -17,6 +17,8 @@ limitations under the License.
 
 #pragma once
 
+#include <Python.h>
+
 #include <cstddef>        // std::size_t, offsetof
 #include <exception>      // std::rethrow_exception, std::current_exception
 #include <optional>       // std::optional
@@ -25,8 +27,6 @@ limitations under the License.
 #include <unordered_map>  // std::unordered_map
 #include <utility>        // std::forward, std::pair, std::make_pair, std::move
 #include <vector>         // std::vector
-
-#include <Python.h>
 
 #if PY_VERSION_HEX < 0x030C00F0  // Python 3.12.0
 #    include <structmember.h>    // PyMemberDef

@@ -17,9 +17,9 @@ limitations under the License.
 
 #pragma once
 
-#include <stdexcept>  // std::runtime_error
-
 #include <Python.h>
+
+#include <stdexcept>  // std::runtime_error
 
 #include <pybind11/pybind11.h>
 

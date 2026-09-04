@@ -17,6 +17,8 @@ limitations under the License.
 
 #pragma once
 
+#include <Python.h>
+
 #include <atomic>    // std::atomic
 #include <memory>    // std::unique_ptr
 #include <optional>  // std::optional, std::nullopt
@@ -25,8 +27,6 @@ limitations under the License.
 #include <tuple>     // std::tuple
 #include <utility>   // std::pair
 #include <vector>    // std::vector
-
-#include <Python.h>
 
 #include <pybind11/pybind11.h>
 
@@ -114,8 +114,8 @@ public:
     // Return an unflattened PyTree given an iterable of leaves and a PyTreeSpec.
     [[nodiscard]] py::object Unflatten(const py::iterable &leaves) const;
 
-    // Flatten a PyTree up to this PyTreeSpec. 'this' must be a tree prefix of the tree-structure of
-    // 'tree'.
+    // Flatten a PyTree up to this PyTreeSpec. `this` must be a tree prefix of the tree-structure of
+    // `tree`.
     // For example, if we flatten a value [(1, (2, 3)), {"foo": 4}] with a PyTreeSpec([(*, *), *]),
     // the result is the list of leaves [1, (2, 3), {"foo": 4}].
     [[nodiscard]] py::list FlattenUpTo(const py::object &tree) const;
